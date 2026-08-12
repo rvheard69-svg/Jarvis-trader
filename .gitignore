@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+signals_log.jsonl
+risk_log.jsonl
+execution_log.jsonl
+jarvis.log
+HALT
+.venv/
+.pytest_cache/
+
