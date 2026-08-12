@@ -75,6 +75,15 @@ def test_pdt_risk_does_not_trigger_over_equity_threshold(guardrail):
     assert not status.pdt_risk
 
 
+def test_brand_new_account_with_no_trade_history_does_not_crash(guardrail):
+    # Alpaca returns daytrade_count=None for a paper account with no trades yet.
+    guardrail.trading_client.get_account.return_value = make_account(equity=100000, last_equity=100000, daytrade_count=None)
+    guardrail.trading_client.get_all_positions.return_value = []
+    status = guardrail.refresh()
+    assert status.day_trade_count == 0
+    assert not status.pdt_risk
+
+
 def test_oversized_position_flagged(guardrail):
     guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
     guardrail.trading_client.get_all_positions.return_value = [make_position("NVDA", 2500)]

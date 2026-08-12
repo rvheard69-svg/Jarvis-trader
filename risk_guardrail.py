@@ -81,7 +81,8 @@ class RiskGuardrail:
         last_equity = float(account.last_equity)
         daily_pnl = equity - last_equity
         daily_pnl_pct = (daily_pnl / last_equity * 100) if last_equity else 0.0
-        day_trade_count = int(account.daytrade_count)
+        # A brand-new paper account with no trade history yet returns None here.
+        day_trade_count = int(account.daytrade_count or 0)
         buying_power = float(account.buying_power)
 
         # Alpaca deprecated the `pattern_day_trader` account flag, so this is

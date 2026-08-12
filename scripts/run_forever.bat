@@ -17,7 +17,9 @@ set MAXDELAY=300
 
 :loop
 echo %date% %time% starting main.py >> %LOGFILE%
-python main.py >> %LOGFILE% 2>&1
+REM -u keeps stdout unbuffered, so status lines reach the log immediately
+REM instead of sitting in Python's buffer while you're trying to read it.
+python -u main.py >> %LOGFILE% 2>&1
 echo %date% %time% main.py exited, restarting in %DELAY%s >> %LOGFILE%
 
 timeout /t %DELAY% /nobreak > NUL

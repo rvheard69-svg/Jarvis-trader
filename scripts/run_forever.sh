@@ -29,7 +29,10 @@ while true; do
     start_ts=$(date +%s)
     echo "$(date '+%F %T') starting main.py" | tee -a "$LOG_FILE"
 
-    python main.py >> "$LOG_FILE" 2>&1
+    # -u keeps stdout unbuffered: without it Python block-buffers when writing
+    # to a file, so status lines sit invisible in the buffer for ages and the
+    # log is useless for seeing what the app is actually doing right now.
+    python -u main.py >> "$LOG_FILE" 2>&1
     exit_code=$?
 
     end_ts=$(date +%s)
