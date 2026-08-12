@@ -23,6 +23,16 @@ MAX_DELAY=300
 HEALTHY_RUN_SECONDS=120
 delay=$BASE_DELAY
 
+# Prefer the project's virtualenv — the dependencies live there, not in
+# whatever `python` happens to be on PATH. Without this the supervisor
+# crash-loops on ModuleNotFoundError instead of running.
+PYTHON=python
+if [ -x .venv/bin/python ]; then
+    PYTHON=.venv/bin/python          # macOS / Linux layout
+elif [ -x .venv/Scripts/python.exe ]; then
+    PYTHON=.venv/Scripts/python.exe  # Windows layout, via Git Bash
+fi
+
 echo "Starting jarvis-trader supervisor. Logs -> $LOG_FILE"
 
 while true; do
@@ -32,7 +42,7 @@ while true; do
     # -u keeps stdout unbuffered: without it Python block-buffers when writing
     # to a file, so status lines sit invisible in the buffer for ages and the
     # log is useless for seeing what the app is actually doing right now.
-    python -u main.py >> "$LOG_FILE" 2>&1
+    "$PYTHON" -u main.py >> "$LOG_FILE" 2>&1
     exit_code=$?
 
     end_ts=$(date +%s)
