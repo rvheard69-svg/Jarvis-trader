@@ -60,6 +60,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
 # Flag any single position worth more than this percent of total equity.
 MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "20.0"))
+# Ceiling on TOTAL invested capital as a percent of equity. MAX_POSITION_PCT
+# only bounds each position separately, so without this the strategy will keep
+# opening new positions as more symbols go oversold. Worst case is
+# TRADE_SIZE_PCT x len(WATCHLIST) — raise this if you widen the watchlist and
+# want it fully investable. Closing sells are never blocked by it.
+MAX_PORTFOLIO_PCT = float(os.getenv("MAX_PORTFOLIO_PCT", "50.0"))
 # Below this equity, the Pattern Day Trader rule applies (max 3 day trades
 # per rolling 5 trading days before restrictions kick in on the 4th).
 PDT_EQUITY_THRESHOLD = float(os.getenv("PDT_EQUITY_THRESHOLD", "25000"))

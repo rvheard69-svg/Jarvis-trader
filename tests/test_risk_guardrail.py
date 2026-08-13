@@ -110,6 +110,58 @@ def test_evaluate_order_blocked_over_position_cap(guardrail):
     assert "cap" in reason
 
 
+def test_portfolio_cap_blocks_order_that_would_breach_it(guardrail, monkeypatch):
+    monkeypatch.setattr(config, "MAX_PORTFOLIO_PCT", 50.0)
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    # $4,800 already invested across positions each under the 20% single cap.
+    guardrail.trading_client.get_all_positions.return_value = [
+        make_position("AAPL", 1600), make_position("NVDA", 1600), make_position("SPY", 1600),
+    ]
+    guardrail.refresh()
+
+    allowed, reason = guardrail.evaluate_order("TSLA", 500)  # -> $5,300 = 53%
+    assert not allowed
+    assert "portfolio cap" in reason
+    assert "53" in reason  # reports the projected figure, not just the current one
+
+
+def test_portfolio_cap_allows_order_that_stays_within_it(guardrail, monkeypatch):
+    monkeypatch.setattr(config, "MAX_PORTFOLIO_PCT", 50.0)
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = [make_position("AAPL", 1600)]
+    guardrail.refresh()
+
+    allowed, _ = guardrail.evaluate_order("TSLA", 500)  # -> $2,100 = 21%
+    assert allowed
+
+
+def test_portfolio_cap_never_blocks_a_closing_sell(guardrail, monkeypatch):
+    """A sell reduces exposure. Blocking it because exposure is already high
+    would trap you in an oversized book — exactly backwards."""
+    monkeypatch.setattr(config, "MAX_PORTFOLIO_PCT", 50.0)
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    # Already far over the portfolio cap (e.g. positions ran up in value).
+    guardrail.trading_client.get_all_positions.return_value = [
+        make_position("AAPL", 1900), make_position("NVDA", 1900),
+        make_position("SPY", 1900), make_position("QQQ", 1900),
+    ]
+    guardrail.refresh()
+
+    # executor passes notional=0.0 for a close-position order
+    allowed, reason = guardrail.evaluate_order("AAPL", 0.0)
+    assert allowed, f"a closing sell must never be blocked, got: {reason}"
+
+
+def test_total_exposure_is_tracked(guardrail):
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = [
+        make_position("AAPL", 1000), make_position("NVDA", 1500),
+    ]
+    status = guardrail.refresh()
+    assert status.total_position_value == 2500.0
+    assert status.total_position_pct == 25.0
+
+
 def test_evaluate_order_allowed(guardrail):
     guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
     guardrail.trading_client.get_all_positions.return_value = []

@@ -37,6 +37,11 @@ class RiskStatus:
     day_trade_count: int
     pdt_risk: bool
     buying_power: float
+    # Sum of all open positions. MAX_POSITION_PCT bounds each position on its
+    # own, which says nothing about total exposure: N positions each just
+    # under the per-position cap are individually fine and collectively not.
+    total_position_value: float = 0.0
+    total_position_pct: float = 0.0
     oversized_positions: list[dict] = field(default_factory=list)
 
 
@@ -91,8 +96,10 @@ class RiskGuardrail:
         pdt_risk = equity < config.PDT_EQUITY_THRESHOLD and day_trade_count >= 3
 
         oversized = []
+        total_position_value = 0.0
         for p in positions:
             market_value = abs(float(p.market_value))
+            total_position_value += market_value
             pct_of_equity = (market_value / equity * 100) if equity else 0.0
             if pct_of_equity > config.MAX_POSITION_PCT:
                 oversized.append({
@@ -138,6 +145,8 @@ class RiskGuardrail:
             day_trade_count=day_trade_count,
             pdt_risk=pdt_risk,
             buying_power=buying_power,
+            total_position_value=round(total_position_value, 2),
+            total_position_pct=round((total_position_value / equity * 100) if equity else 0.0, 2),
             oversized_positions=oversized,
         )
         self._last_status = status
@@ -165,6 +174,21 @@ class RiskGuardrail:
                 f"blocked: ${notional:,.0f} on {symbol} is {pct_of_equity:.1f}% of equity, "
                 f"over the {config.MAX_POSITION_PCT:.0f}% cap"
             )
+
+        # Portfolio-level cap. Only applies to orders that ADD exposure: a
+        # closing sell arrives here as notional=0 and must never be blocked —
+        # refusing to let you reduce risk because you already hold too much
+        # would be exactly backwards, and would trap you in an oversized book.
+        if notional > 0:
+            projected = status.total_position_value + notional
+            projected_pct = (projected / status.equity * 100) if status.equity else 100.0
+            if projected_pct > config.MAX_PORTFOLIO_PCT:
+                return False, (
+                    f"blocked: ${notional:,.0f} on {symbol} would take total exposure to "
+                    f"${projected:,.0f} ({projected_pct:.1f}% of equity), over the "
+                    f"{config.MAX_PORTFOLIO_PCT:.0f}% portfolio cap "
+                    f"(currently ${status.total_position_value:,.0f} / {status.total_position_pct:.1f}%)"
+                )
         if status.pdt_risk:
             return False, (
                 f"blocked: {status.day_trade_count} day trades already in the last 5 days on a "
