@@ -106,8 +106,11 @@ class Executor:
 
             await asyncio.to_thread(self._telegram_send, text)
         except Exception as exc:
-            print(f"[Executor] couldn't reach Telegram to request confirmation, "
-                  f"treating {proposal.symbol} as unconfirmed: {exc!r}")
+            # redact_secrets: requests puts the full URL in HTTPError, and the
+            # Telegram bot token lives in that URL path.
+            print(config.redact_secrets(
+                f"[Executor] couldn't reach Telegram to request confirmation, "
+                f"treating {proposal.symbol} as unconfirmed: {exc!r}"))
             return False, f"couldn't reach Telegram to ask: {type(exc).__name__}"
 
         deadline = time.monotonic() + config.CONFIRMATION_TIMEOUT_SECONDS
@@ -116,7 +119,7 @@ class Executor:
             try:
                 updates = await asyncio.to_thread(self._telegram_get_updates, self._telegram_offset)
             except Exception as exc:
-                print(f"[Executor] Telegram poll failed: {exc!r}")
+                print(config.redact_secrets(f"[Executor] Telegram poll failed: {exc!r}"))
                 continue
             for update in updates:
                 self._telegram_offset = update["update_id"] + 1

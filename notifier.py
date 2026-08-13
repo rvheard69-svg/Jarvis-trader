@@ -66,9 +66,11 @@ def _send_telegram(title: str, body: str) -> None:
             timeout=10,
         )
         if resp.status_code != 200:
-            print(f"[Notifier] Telegram send failed: {resp.status_code} {resp.text}")
+            print(config.redact_secrets(f"[Notifier] Telegram send failed: {resp.status_code} {resp.text}"))
     except Exception as exc:
-        print(f"[Notifier] Telegram request failed: {exc!r}")
+        # The bot token is in the request URL, which requests embeds in its
+        # exception text — redact before it reaches the log.
+        print(config.redact_secrets(f"[Notifier] Telegram request failed: {exc!r}"))
 
 
 def _safe_print(text: str) -> None:

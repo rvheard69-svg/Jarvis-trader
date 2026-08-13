@@ -83,6 +83,20 @@ CONFIRMATION_POLL_SECONDS = int(os.getenv("CONFIRMATION_POLL_SECONDS", "5"))
 EXECUTION_LOG_PATH = os.getenv("EXECUTION_LOG_PATH", "execution_log.jsonl")
 
 
+def redact_secrets(text: str) -> str:
+    """
+    Strip credentials out of anything headed for a log or the console.
+
+    Telegram embeds the bot token in the URL path, and requests puts the full
+    URL into HTTPError — so a single failed call writes a live credential into
+    jarvis.log in plaintext. Route exception text through here before printing.
+    """
+    for secret in (TELEGRAM_BOT_TOKEN, ALPACA_SECRET_KEY, ALPACA_API_KEY, ANTHROPIC_API_KEY):
+        if secret and not _is_placeholder(secret):
+            text = text.replace(secret, "<redacted>")
+    return text
+
+
 def _is_placeholder(val: str) -> bool:
     """
     .env.example ships values like `your_bot_token_from_botfather`. Those are
