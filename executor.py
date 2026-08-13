@@ -72,11 +72,17 @@ class Executor:
         resp.raise_for_status()
         return resp.json().get("result", [])
 
-    async def _propose_and_confirm(self, proposal: strategy.TradeProposal) -> bool:
+    async def _propose_and_confirm(self, proposal: strategy.TradeProposal) -> tuple[bool, str]:
+        """
+        Returns (confirmed, reason). The reason is what lands in
+        execution_log.jsonl — the record you read back later to understand why
+        a trade didn't happen — so it has to say what actually occurred rather
+        than assume a timeout.
+        """
         if not self._telegram_configured():
             print("[Executor] Telegram isn't configured — nothing to confirm through, so no order will be proposed. "
                   "Trade confirmation requires NOTIFY_TELEGRAM=true and valid credentials in .env.")
-            return False
+            return False, "Telegram not configured — you were never asked"
 
         amount = f"${proposal.notional:,.2f}" if proposal.notional else "full position"
         text = (
@@ -102,7 +108,7 @@ class Executor:
         except Exception as exc:
             print(f"[Executor] couldn't reach Telegram to request confirmation, "
                   f"treating {proposal.symbol} as unconfirmed: {exc!r}")
-            return False
+            return False, f"couldn't reach Telegram to ask: {type(exc).__name__}"
 
         deadline = time.monotonic() + config.CONFIRMATION_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
@@ -119,11 +125,11 @@ class Executor:
                     continue  # ignore anyone else who might message the bot
                 reply = (message.get("text") or "").strip().lower()
                 if reply in ("yes", "y", "confirm"):
-                    return True
+                    return True, f"you replied '{reply}'"
                 if reply in ("no", "n", "cancel"):
-                    return False
+                    return False, f"you replied '{reply}'"
                 # anything else (e.g. a stray "hi") is ignored, keep waiting
-        return False  # timed out with no clear reply
+        return False, f"no reply within {config.CONFIRMATION_TIMEOUT_SECONDS}s"
 
     # --- order submission --------------------------------------------------
 
@@ -170,12 +176,12 @@ class Executor:
             self._notify(f"BLOCKED — {proposal.side.upper()} {proposal.symbol}", reason)
             return
 
-        confirmed = await self._propose_and_confirm(proposal)
+        confirmed, why = await self._propose_and_confirm(proposal)
         if not confirmed:
-            self._log(signal.symbol, "not_confirmed", detail="no 'yes' received before timeout, or 'no' received", proposal=proposal)
+            self._log(signal.symbol, "not_confirmed", detail=why, proposal=proposal)
             self._notify(
                 f"NOT SUBMITTED — {proposal.side.upper()} {proposal.symbol}",
-                "No confirmation received (or you said no) — nothing was submitted.",
+                f"Nothing was submitted: {why}.",
             )
             return
 

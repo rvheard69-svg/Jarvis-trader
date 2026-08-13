@@ -64,6 +64,21 @@ def test_desktop_failure_does_not_block_telegram(result, monkeypatch):
     telegram.assert_called_once()
 
 
+def test_title_omits_price_when_there_isnt_one(result):
+    # Execution / account alerts pass price=0.0; "@ $0.00" reads like a bug.
+    result["symbol"] = "EXECUTION"
+    result["kind"] = "NOT SUBMITTED — BUY AAPL"
+    result["price"] = 0.0
+    title, _ = notifier._format(result)
+    assert title == "EXECUTION — NOT SUBMITTED — BUY AAPL"
+    assert "$0.00" not in title
+
+
+def test_title_keeps_price_for_real_signals(result):
+    title, _ = notifier._format(result)
+    assert "@ $225.04" in title
+
+
 def test_unicode_body_degrades_to_ascii_rather_than_raising(result, monkeypatch, capsys):
     printed = []
 

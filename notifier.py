@@ -24,7 +24,11 @@ except ImportError:
 
 def _format(result: dict) -> tuple[str, str]:
     when = datetime.fromtimestamp(result["ts"]).strftime("%H:%M:%S")
-    title = f"{result['symbol']} — {result['kind']} @ ${result['price']:.2f}"
+    title = f"{result['symbol']} — {result['kind']}"
+    # Execution and account alerts carry no meaningful price; rendering them
+    # as "@ $0.00" makes a working alert look like a bug.
+    if result.get("price"):
+        title += f" @ ${result['price']:.2f}"
     body = f"[{when}] {result['explanation']}"
     if result["headlines"]:
         body += "\n\nHeadlines:\n" + "\n".join(f"- {h}" for h in result["headlines"])

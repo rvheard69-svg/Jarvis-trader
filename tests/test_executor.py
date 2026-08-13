@@ -107,6 +107,45 @@ async def test_confirmed_sell_closes_position(monkeypatch, tmp_path):
     assert last_log_entry(tmp_path)["outcome"] == "submitted"
 
 
+async def test_decline_reason_distinguishes_never_asked_from_timeout(monkeypatch, tmp_path):
+    """The execution log is the record you read back to understand why a trade
+    didn't happen — it must not report a timeout that never occurred."""
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "your_bot_token_from_botfather")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "your_chat_id")
+
+    ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
+    await ex.process(Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20}))
+
+    entry = last_log_entry(tmp_path)
+    assert entry["outcome"] == "not_confirmed"
+    assert "never asked" in entry["detail"]
+    assert "timeout" not in entry["detail"].lower()
+
+
+async def test_timeout_reason_says_timeout(monkeypatch, tmp_path):
+    ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
+    monkeypatch.setattr(executor_module.requests, "get",
+                        MagicMock(return_value=json_response({"result": []})))
+
+    await ex.process(Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20}))
+
+    assert "no reply within" in last_log_entry(tmp_path)["detail"]
+
+
+async def test_explicit_no_is_recorded_as_your_reply(monkeypatch, tmp_path):
+    ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
+    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+        json_response({"result": []}),
+        json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "no"}}]}),
+    ]))
+
+    await ex.process(Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20}))
+
+    entry = last_log_entry(tmp_path)
+    assert entry["outcome"] == "not_confirmed"
+    assert "you replied 'no'" in entry["detail"]
+
+
 async def test_explicit_no_cancels(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
