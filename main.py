@@ -137,7 +137,7 @@ def _notify_risk_event(title: str, body: str) -> None:
 async def main() -> None:
     config.validate()
     print(f"Watching: {', '.join(config.WATCHLIST)}  (paper trading: {config.ALPACA_PAPER})")
-    if not (config.NOTIFY_TELEGRAM and config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID):
+    if not config.telegram_configured():
         print("[main] WARNING: Telegram isn't fully configured — the Executor can never get a "
               "confirmation, so no trade will ever be submitted, even if the strategy fires. "
               "Analysis and desktop alerts still work.")

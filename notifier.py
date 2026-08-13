@@ -49,8 +49,10 @@ def _send_desktop(title: str, body: str) -> None:
 def _send_telegram(title: str, body: str) -> None:
     if not config.NOTIFY_TELEGRAM:
         return
-    if not (config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID):
-        print("[Notifier] Telegram is enabled but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are missing — skipping")
+    if not config.telegram_configured():
+        # Placeholder credentials from .env.example land here. Skip quietly —
+        # main.py already warns once at startup; warning on every single alert
+        # would bury the alerts themselves.
         return
     url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
     try:

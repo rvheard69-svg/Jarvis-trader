@@ -50,11 +50,18 @@ class Executor:
     # --- Telegram confirmation --------------------------------------------
 
     def _telegram_configured(self) -> bool:
-        return bool(config.NOTIFY_TELEGRAM and config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID)
+        return config.telegram_configured()
 
     def _telegram_send(self, text: str) -> None:
         url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": config.TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        resp = requests.post(
+            url,
+            json={"chat_id": config.TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+        )
+        # Raise rather than swallow: if the proposal never reached you, there's
+        # no point polling five minutes for a reply that can't come.
+        resp.raise_for_status()
 
     def _telegram_get_updates(self, offset: int | None) -> list:
         url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -71,12 +78,6 @@ class Executor:
                   "Trade confirmation requires NOTIFY_TELEGRAM=true and valid credentials in .env.")
             return False
 
-        # Establish our starting offset the first time, so we only ever look
-        # at messages sent AFTER this proposal goes out, not old chat history.
-        if self._telegram_offset is None:
-            existing = await asyncio.to_thread(self._telegram_get_updates, None)
-            self._telegram_offset = (existing[-1]["update_id"] + 1) if existing else 0
-
         amount = f"${proposal.notional:,.2f}" if proposal.notional else "full position"
         text = (
             f"\U0001F514 *Trade proposal (paper account)*\n"
@@ -85,7 +86,23 @@ class Executor:
             f"Reply *yes* within {config.CONFIRMATION_TIMEOUT_SECONDS // 60} min to submit this paper order, "
             f"or *no* to cancel it now."
         )
-        await asyncio.to_thread(self._telegram_send, text)
+
+        # Establishing the offset and sending the prompt both hit the network.
+        # A failure here means you were never actually asked, so treat it as
+        # "not confirmed" and log it that way — never let it escape as an
+        # exception, which would skip the execution-log record entirely.
+        try:
+            # Establish our starting offset the first time, so we only ever look
+            # at messages sent AFTER this proposal goes out, not old chat history.
+            if self._telegram_offset is None:
+                existing = await asyncio.to_thread(self._telegram_get_updates, None)
+                self._telegram_offset = (existing[-1]["update_id"] + 1) if existing else 0
+
+            await asyncio.to_thread(self._telegram_send, text)
+        except Exception as exc:
+            print(f"[Executor] couldn't reach Telegram to request confirmation, "
+                  f"treating {proposal.symbol} as unconfirmed: {exc!r}")
+            return False
 
         deadline = time.monotonic() + config.CONFIRMATION_TIMEOUT_SECONDS
         while time.monotonic() < deadline:

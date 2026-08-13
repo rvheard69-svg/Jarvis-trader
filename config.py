@@ -83,6 +83,30 @@ CONFIRMATION_POLL_SECONDS = int(os.getenv("CONFIRMATION_POLL_SECONDS", "5"))
 EXECUTION_LOG_PATH = os.getenv("EXECUTION_LOG_PATH", "execution_log.jsonl")
 
 
+def _is_placeholder(val: str) -> bool:
+    """
+    .env.example ships values like `your_bot_token_from_botfather`. Those are
+    non-empty strings, so a plain truthiness check reads them as configured —
+    which is how an untouched .env ends up firing doomed Telegram requests and,
+    worse, convincing the Executor it has a confirmation channel it doesn't.
+    """
+    return not val.strip() or val.strip().lower().startswith("your_")
+
+
+def telegram_configured() -> bool:
+    """
+    Single source of truth for 'can we actually reach Telegram right now'.
+    Everything that talks to Telegram — the Notifier, the Executor's
+    confirmation prompt, main.py's startup warning — must agree, or they
+    disagree about whether a trade can be confirmed.
+    """
+    return bool(
+        NOTIFY_TELEGRAM
+        and not _is_placeholder(TELEGRAM_BOT_TOKEN)
+        and not _is_placeholder(TELEGRAM_CHAT_ID)
+    )
+
+
 def validate() -> None:
     missing = [
         name

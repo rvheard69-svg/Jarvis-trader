@@ -157,6 +157,64 @@ async def test_reply_from_wrong_chat_id_is_ignored(monkeypatch, tmp_path):
     assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
 
 
+async def test_placeholder_credentials_block_any_proposal(monkeypatch, tmp_path):
+    # An untouched .env.example: non-empty placeholder strings that used to
+    # pass every truthiness check and convince the Executor it had a channel.
+    monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "your_bot_token_from_botfather")
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "your_chat_id")
+    monkeypatch.setattr(executor_module.requests, "get", MagicMock())
+
+    ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
+    signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
+    await ex.process(signal)
+
+    executor_module.requests.get.assert_not_called()   # never even reaches out
+    executor_module.requests.post.assert_not_called()
+    ex.trading_client.submit_order.assert_not_called()
+    assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
+
+
+async def test_unreachable_telegram_logs_not_confirmed_instead_of_raising(monkeypatch, tmp_path):
+    # Valid-looking credentials, but Telegram is down / token revoked.
+    guardrail = FakeGuardrail(equity=10000.0, allowed=True)
+    ex = make_executor(guardrail)
+    monkeypatch.setattr(
+        executor_module.requests,
+        "get",
+        MagicMock(side_effect=RuntimeError("404 Not Found")),
+    )
+
+    signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
+    await ex.process(signal)  # must not raise
+
+    ex.trading_client.submit_order.assert_not_called()
+    assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
+
+
+async def test_failed_send_short_circuits_without_polling(monkeypatch, tmp_path):
+    # Offset lookup succeeds but the proposal never lands — don't sit for the
+    # full timeout waiting on a reply to a message that was never delivered.
+    guardrail = FakeGuardrail(equity=10000.0, allowed=True)
+    ex = make_executor(guardrail)
+    monkeypatch.setattr(
+        executor_module.requests,
+        "get",
+        MagicMock(return_value=json_response({"result": []})),
+    )
+    failed = MagicMock()
+    failed.raise_for_status.side_effect = RuntimeError("401 Unauthorized")
+    monkeypatch.setattr(executor_module.requests, "post", MagicMock(return_value=failed))
+
+    signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
+    start = asyncio.get_event_loop().time()
+    await ex.process(signal)
+    elapsed = asyncio.get_event_loop().time() - start
+
+    assert elapsed < config.CONFIRMATION_TIMEOUT_SECONDS  # returned early
+    ex.trading_client.submit_order.assert_not_called()
+    assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
+
+
 async def test_duplicate_signal_on_pending_symbol_is_dropped(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
