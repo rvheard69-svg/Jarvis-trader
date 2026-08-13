@@ -66,17 +66,43 @@ class Analyst:
             lines.append("Recent headlines: none found")
         return "\n".join(lines)
 
+    @staticmethod
+    def _describe(signal: Signal) -> str:
+        """
+        Plain-English fallback built only from the Watcher's own numbers, for
+        when Claude can't be reached. No LLM, no network — this must not fail.
+        """
+        parts = [f"{signal.symbol} triggered {signal.kind} at ${signal.price:.2f}."]
+        detail = signal.detail
+        if detail.get("rsi") is not None:
+            parts.append(f"RSI {detail['rsi']}.")
+        if detail.get("vwap") is not None:
+            parts.append(f"VWAP {float(detail['vwap']):.4f}.")
+        if detail.get("volume_ratio") is not None:
+            parts.append(f"Volume {detail['volume_ratio']}x its trailing average.")
+        if detail.get("sma20") is not None:
+            parts.append(f"20-bar SMA {float(detail['sma20']):.4f}.")
+        return " ".join(parts)
+
     def process(self, signal: Signal) -> dict:
         headlines = self._fetch_recent_news(signal.symbol)
         prompt = self._build_prompt(signal, headlines)
 
-        response = self.client.messages.create(
-            model=config.ANTHROPIC_MODEL,
-            max_tokens=300,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        explanation = "".join(block.text for block in response.content if block.type == "text")
+        try:
+            response = self.client.messages.create(
+                model=config.ANTHROPIC_MODEL,
+                max_tokens=300,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            explanation = "".join(block.text for block in response.content if block.type == "text")
+        except Exception as exc:
+            # The signal is deterministic and already worth knowing about. An
+            # Anthropic outage, an expired key, or an exhausted credit balance
+            # must not swallow the alert AND the audit-log entry along with the
+            # narration — degrade to the raw indicator snapshot instead.
+            print(f"[Analyst] narration unavailable for {signal.symbol} {signal.kind}: {exc}")
+            explanation = f"[Analyst unavailable: {type(exc).__name__}] {self._describe(signal)}"
 
         result = {
             "ts": time.time(),
