@@ -18,7 +18,17 @@ in Telegram. This process only ever touches Alpaca's PAPER endpoint — see
 README.md for what that guarantees and what it doesn't.
 """
 import asyncio
+import sys
 import time
+
+# Claude's explanations routinely contain characters outside the Windows
+# console default (cp1252) — arrows, math symbols, typographic marks. When
+# run_forever redirects stdout to jarvis.log, Python encodes with the locale
+# codec and a single such character raises UnicodeEncodeError mid-alert.
+# Force UTF-8 before anything can print.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import config
 from watcher import Watcher

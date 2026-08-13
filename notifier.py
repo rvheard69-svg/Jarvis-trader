@@ -67,8 +67,41 @@ def _send_telegram(title: str, body: str) -> None:
         print(f"[Notifier] Telegram request failed: {exc!r}")
 
 
+def _safe_print(text: str) -> None:
+    """
+    print() that can't raise on an encoding-limited stdout. Redirected stdout
+    on Windows encodes with cp1252, which has no arrows or math symbols —
+    exactly what Claude reaches for in technical explanations. Losing the
+    characters is fine; losing the alert is not.
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "replace").decode("ascii"))
+
+
+def _send_console(title: str, body: str) -> None:
+    _safe_print(f"\n{title}\n{'-' * len(title)}\n{body}\n")
+
+
 def send(result: dict) -> None:
+    """
+    Fan out to every enabled channel. Each is independent and best-effort: a
+    failure in one must never prevent the others from firing, which is why
+    each call is isolated rather than run in sequence in one try block.
+    """
     title, body = _format(result)
-    print(f"\n{title}\n{'-' * len(title)}\n{body}\n")  # console always gets it — cheap, and useful in logs
-    _send_desktop(title, body)
-    _send_telegram(title, body)
+    for name, channel in (
+        ("console", _send_console),
+        ("desktop", _send_desktop),
+        ("telegram", _send_telegram),
+    ):
+        try:
+            channel(title, body)
+        except Exception as exc:
+            # _safe_print, not print: a UnicodeEncodeError's repr contains the
+            # very character that couldn't be encoded, so a plain print here
+            # would raise the same error again and escape send() entirely.
+            # Deliberately not channel.__name__ either — the handler for a
+            # failing channel must not itself be able to fail.
+            _safe_print(f"[Notifier] {name} channel failed: {exc!r}")
