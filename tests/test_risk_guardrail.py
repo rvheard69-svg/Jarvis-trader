@@ -17,8 +17,15 @@ def make_account(equity, last_equity, daytrade_count=0, buying_power=10000):
     )
 
 
-def make_position(symbol, market_value):
-    return SimpleNamespace(symbol=symbol, market_value=str(market_value))
+def make_position(symbol, market_value, unrealized_plpc=0.0):
+    # unrealized_plpc is a fraction, as Alpaca returns it (-0.0523 == -5.23%).
+    # Defaults to flat so these tests exercise sizing rules, not the stop loss.
+    return SimpleNamespace(
+        symbol=symbol,
+        market_value=str(market_value),
+        unrealized_plpc=str(unrealized_plpc),
+        unrealized_pl=str(round(market_value * unrealized_plpc, 2)),
+    )
 
 
 @pytest.fixture

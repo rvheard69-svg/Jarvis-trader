@@ -199,6 +199,42 @@ class Executor:
             self._log(signal.symbol, "submit_failed", detail=str(exc), proposal=proposal)
             self._notify(f"SUBMIT FAILED — {proposal.side.upper()} {proposal.symbol}", str(exc))
 
+    # --- stop loss ----------------------------------------------------------
+
+    async def force_close(self, symbol: str, reason: str) -> bool:
+        """
+        Close a position immediately, with no confirmation step.
+
+        This is the only path in the app that trades without your explicit
+        yes, so it is deliberately narrow: it takes a symbol you already hold
+        and calls close_position on it. There is no side, no sizing, and no
+        way for it to open a position or increase exposure.
+
+        It runs even when the Guardrail is halted. A halt exists to stop the
+        system taking on NEW risk; refusing to cut a losing position while
+        halted would be backwards, for the same reason the portfolio cap
+        exempts sells.
+        """
+        if symbol in self._pending:
+            # A confirmation prompt for this symbol is already outstanding.
+            # Submitting now could double-close if the user replies yes a
+            # moment later; the caller retries on the next risk cycle.
+            self._log(symbol, "stop_loss_deferred", detail=f"{reason}; a proposal is awaiting confirmation")
+            return False
+
+        self._pending.add(symbol)
+        try:
+            order = await asyncio.to_thread(self.trading_client.close_position, symbol)
+            self._log(symbol, "stop_loss_closed", detail=f"{reason}; order_id={getattr(order, 'id', 'unknown')}")
+            self._notify(f"STOP LOSS — CLOSED {symbol}", f"{reason}. Position closed automatically, no confirmation required.")
+            return True
+        except Exception as exc:
+            self._log(symbol, "stop_loss_failed", detail=f"{reason}; {config.redact_secrets(str(exc))}")
+            self._notify(f"STOP LOSS FAILED — {symbol}", f"{reason}. Could not close: {type(exc).__name__}. Position is still open.")
+            return False
+        finally:
+            self._pending.discard(symbol)
+
     # --- logging / notification --------------------------------------------
 
     def _notify(self, title: str, body: str) -> None:

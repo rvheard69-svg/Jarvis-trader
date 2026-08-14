@@ -79,6 +79,12 @@ HALT_FILE = os.getenv("HALT_FILE", "HALT")
 # single websocket per account, so a second instance can't work — it just
 # fights the first for the connection.
 LOCK_FILE = os.getenv("LOCK_FILE", "jarvis.lock")
+# Close any position down this many percent, WITHOUT waiting for confirmation.
+# strategy.py only exits on RSI >= RSI_OVERBOUGHT, which a falling position
+# never reaches — so without this, nothing ever cuts a loser. Set to 0 to
+# disable. This is the one path that trades without your explicit yes; it can
+# only ever close an existing position, never open one.
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "5.0"))
 RISK_LOG_PATH = os.getenv("RISK_LOG_PATH", "risk_log.jsonl")
 
 # --- Execution (paper trading only) ---

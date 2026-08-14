@@ -43,6 +43,10 @@ class RiskStatus:
     total_position_value: float = 0.0
     total_position_pct: float = 0.0
     oversized_positions: list[dict] = field(default_factory=list)
+    # Positions at or past the stop-loss threshold. Detected here rather than
+    # in the Watcher because a position can bleed out without ever tripping an
+    # RSI/VWAP/volume trigger — nothing would fire, and nothing would notice.
+    stopped_out_positions: list[dict] = field(default_factory=list)
 
 
 class RiskGuardrail:
@@ -96,10 +100,23 @@ class RiskGuardrail:
         pdt_risk = equity < config.PDT_EQUITY_THRESHOLD and day_trade_count >= 3
 
         oversized = []
+        stopped_out = []
         total_position_value = 0.0
         for p in positions:
             market_value = abs(float(p.market_value))
             total_position_value += market_value
+
+            # unrealized_plpc is a fraction (-0.0523 == -5.23%).
+            if config.STOP_LOSS_PCT > 0:
+                plpc = float(p.unrealized_plpc or 0.0) * 100
+                if plpc <= -config.STOP_LOSS_PCT:
+                    stopped_out.append({
+                        "symbol": p.symbol,
+                        "unrealized_plpc": round(plpc, 2),
+                        "unrealized_pl": round(float(p.unrealized_pl or 0.0), 2),
+                        "market_value": round(market_value, 2),
+                    })
+
             pct_of_equity = (market_value / equity * 100) if equity else 0.0
             if pct_of_equity > config.MAX_POSITION_PCT:
                 oversized.append({
@@ -148,6 +165,7 @@ class RiskGuardrail:
             total_position_value=round(total_position_value, 2),
             total_position_pct=round((total_position_value / equity * 100) if equity else 0.0, 2),
             oversized_positions=oversized,
+            stopped_out_positions=stopped_out,
         )
         self._last_status = status
         self._log(status)

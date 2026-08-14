@@ -77,7 +77,7 @@ async def _handle_execution(signal, executor: Executor) -> None:
         print(f"[Executor] failed to process signal {signal}: {exc}")
 
 
-async def risk_monitor_loop(guardrail: RiskGuardrail) -> None:
+async def risk_monitor_loop(guardrail: RiskGuardrail, executor: Executor) -> None:
     """
     Polls your actual Alpaca account on a timer and pushes a notification
     the moment anything crosses a line — a fresh halt, approaching the PDT
@@ -118,6 +118,17 @@ async def risk_monitor_loop(guardrail: RiskGuardrail) -> None:
                 f"${status.equity:,.0f} account (PDT applies under ${config.PDT_EQUITY_THRESHOLD:,.0f}). "
                 f"One more day trade risks a Pattern Day Trader restriction.",
             )
+
+        # Stop loss runs before the informational checks below: if a position
+        # needs closing, that matters more than notifying about its size. Not
+        # gated on the halt state — see Executor.force_close.
+        for pos in status.stopped_out_positions:
+            reason = (
+                f"{pos['symbol']} down {pos['unrealized_plpc']:.2f}% "
+                f"(${pos['unrealized_pl']:,.2f}), past the {config.STOP_LOSS_PCT:.1f}% stop"
+            )
+            print(f"[main] STOP LOSS triggered: {reason}")
+            await executor.force_close(pos["symbol"], reason)
 
         for pos in status.oversized_positions:
             if pos["symbol"] not in notified_oversized:
@@ -166,7 +177,7 @@ async def main() -> None:
     await asyncio.gather(
         watcher.start(),
         dispatch(queue, analyst, executor, guardrail),
-        risk_monitor_loop(guardrail),
+        risk_monitor_loop(guardrail, executor),
     )
 
 
