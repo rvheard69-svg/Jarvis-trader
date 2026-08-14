@@ -70,7 +70,10 @@ MAX_PORTFOLIO_PCT = float(os.getenv("MAX_PORTFOLIO_PCT", "50.0"))
 # per rolling 5 trading days before restrictions kick in on the 4th).
 PDT_EQUITY_THRESHOLD = float(os.getenv("PDT_EQUITY_THRESHOLD", "25000"))
 # How often the guardrail re-checks account state against Alpaca.
-RISK_CHECK_INTERVAL_SECONDS = int(os.getenv("RISK_CHECK_INTERVAL_SECONDS", "120"))
+# Also the stop-loss re-check rate, which is what sets this: a position can
+# only be detected past STOP_LOSS_PCT on a poll, so this is the worst-case lag
+# before one is closed. 30s costs ~4 API calls/min against Alpaca's ~200/min.
+RISK_CHECK_INTERVAL_SECONDS = int(os.getenv("RISK_CHECK_INTERVAL_SECONDS", "30"))
 # Manual kill switch: if this file exists, the guardrail treats the day as
 # halted regardless of P&L. Create it with `touch HALT` (or equivalent);
 # delete it (or wait for the next trading day) to resume.
