@@ -75,6 +75,10 @@ RISK_CHECK_INTERVAL_SECONDS = int(os.getenv("RISK_CHECK_INTERVAL_SECONDS", "120"
 # halted regardless of P&L. Create it with `touch HALT` (or equivalent);
 # delete it (or wait for the next trading day) to resume.
 HALT_FILE = os.getenv("HALT_FILE", "HALT")
+# Advisory lock proving only one copy of the app is running. Alpaca allows a
+# single websocket per account, so a second instance can't work — it just
+# fights the first for the connection.
+LOCK_FILE = os.getenv("LOCK_FILE", "jarvis.lock")
 RISK_LOG_PATH = os.getenv("RISK_LOG_PATH", "risk_log.jsonl")
 
 # --- Execution (paper trading only) ---

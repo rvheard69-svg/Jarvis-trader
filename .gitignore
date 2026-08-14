@@ -9,3 +9,4 @@ HALT
 .venv/
 .pytest_cache/
 
+jarvis.lock

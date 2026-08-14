@@ -28,7 +28,13 @@ REM instead of sitting in Python's buffer while you're trying to read it.
 "%PYTHON%" -u main.py >> %LOGFILE% 2>&1
 echo %date% %time% main.py exited, restarting in %DELAY%s >> %LOGFILE%
 
-timeout /t %DELAY% /nobreak > NUL
+REM Start-Sleep rather than `timeout /t`: timeout reads the console input
+REM handle and aborts with "input redirection is not supported" in some
+REM non-interactive contexts (notably under Task Scheduler, which README.md
+REM recommends). It does work under a plain hidden window, so this is
+REM hardening for the documented deployment path, not a fix for an observed
+REM failure. Start-Sleep has no console dependency either way.
+powershell -NoProfile -Command "Start-Sleep -Seconds %DELAY%"
 set /a DELAY=DELAY*2
 if %DELAY% GTR %MAXDELAY% set DELAY=%MAXDELAY%
 

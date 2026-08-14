@@ -31,6 +31,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import config
+import single_instance
 from watcher import Watcher
 from analyst import Analyst
 from executor import Executor
@@ -145,6 +146,10 @@ def _notify_risk_event(title: str, body: str) -> None:
 
 
 async def main() -> None:
+    # Before anything opens a socket: Alpaca allows one websocket per account,
+    # so a second copy of this process doesn't degrade gracefully — it fights
+    # the running one for the connection and neither reliably gets bars.
+    single_instance.acquire_or_exit(config.LOCK_FILE)
     config.validate()
     print(f"Watching: {', '.join(config.WATCHLIST)}  (paper trading: {config.ALPACA_PAPER})")
     if not config.telegram_configured():
