@@ -32,6 +32,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 import config
 import single_instance
+import time_exit
 from watcher import Watcher
 from analyst import Analyst
 from executor import Executor
@@ -129,6 +130,19 @@ async def risk_monitor_loop(guardrail: RiskGuardrail, executor: Executor) -> Non
             )
             print(f"[main] STOP LOSS triggered: {reason}")
             await executor.force_close(pos["symbol"], reason)
+
+        # Time-based exits, after the stop loss and before the informational
+        # checks. A position the stop already closed is gone from
+        # held_symbols by the next poll, so the two cannot both act on it.
+        for exit_ in time_exit.due(
+            held_symbols=status.held_symbols,
+            entries=time_exit.entry_times(config.EXECUTION_LOG_PATH),
+            seconds_to_close=status.seconds_to_close,
+            max_hold_minutes=config.MAX_HOLD_MINUTES,
+            flatten_before_close_minutes=config.FLATTEN_BEFORE_CLOSE_MINUTES,
+        ):
+            print(f"[main] TIME EXIT: {exit_.symbol} — {exit_.reason}")
+            await executor.force_close(exit_.symbol, exit_.reason)
 
         for pos in status.oversized_positions:
             if pos["symbol"] not in notified_oversized:

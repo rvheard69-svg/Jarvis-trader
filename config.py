@@ -88,6 +88,22 @@ LOCK_FILE = os.getenv("LOCK_FILE", "jarvis.lock")
 # disable. This is the one path that trades without your explicit yes; it can
 # only ever close an existing position, never open one.
 STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "5.0"))
+
+# --- Time-based exits -------------------------------------------------------
+# strategy.py only sells on RSI overbought, so a position whose RSI never
+# recovers is held indefinitely. The stop loss does not cover the resulting
+# overnight exposure: measured from real bars, average daily range is roughly
+# 4.5x the stop distance, so a typical overnight move is several times the
+# level the stop defends.
+#
+# Close everything this many minutes before the session close, so carrying
+# overnight becomes a deliberate choice rather than the default. 0 disables.
+FLATTEN_BEFORE_CLOSE_MINUTES = float(os.getenv("FLATTEN_BEFORE_CLOSE_MINUTES", "15"))
+# Close any position open longer than this, bounding the "RSI never came back"
+# case during the session. 0 disables. Default 0: the close-flatten above
+# already caps the worst exposure, and a max hold that fires mid-session cuts
+# winners as readily as losers — turn it on deliberately.
+MAX_HOLD_MINUTES = float(os.getenv("MAX_HOLD_MINUTES", "0"))
 RISK_LOG_PATH = os.getenv("RISK_LOG_PATH", "risk_log.jsonl")
 
 # --- Execution (paper trading only) ---

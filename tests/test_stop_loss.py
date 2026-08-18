@@ -31,7 +31,9 @@ def guardrail(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "HALT_FILE", str(tmp_path / "HALT"))
     monkeypatch.setattr(config, "RISK_LOG_PATH", str(tmp_path / "risk_log.jsonl"))
     monkeypatch.setattr(config, "STOP_LOSS_PCT", 5.0)
-    return RiskGuardrail()
+    g = RiskGuardrail()
+    g.trading_client.get_clock.return_value = SimpleNamespace(is_open=False)
+    return g
 
 
 @pytest.fixture

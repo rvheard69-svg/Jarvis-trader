@@ -47,6 +47,11 @@ class RiskStatus:
     # in the Watcher because a position can bleed out without ever tripping an
     # RSI/VWAP/volume trigger — nothing would fire, and nothing would notice.
     stopped_out_positions: list[dict] = field(default_factory=list)
+    # Symbols currently held, and how long until the session closes. Both feed
+    # the time-based exits; None means the market is shut or the clock could
+    # not be read, which is deliberately not treated as "closing now".
+    held_symbols: list[str] = field(default_factory=list)
+    seconds_to_close: float | None = None
 
 
 class RiskGuardrail:
@@ -166,10 +171,31 @@ class RiskGuardrail:
             total_position_pct=round((total_position_value / equity * 100) if equity else 0.0, 2),
             oversized_positions=oversized,
             stopped_out_positions=stopped_out,
+            held_symbols=[p.symbol for p in positions],
+            seconds_to_close=self._seconds_to_close(),
         )
         self._last_status = status
         self._log(status)
         return status
+
+    def _seconds_to_close(self) -> float | None:
+        """
+        Seconds until the session closes, or None if the market is shut or the
+        clock is unreadable. None rather than 0 on failure: an unknown close is
+        not a reason to liquidate, and the next poll will ask again.
+        """
+        try:
+            clock = self.trading_client.get_clock()
+            if not clock.is_open:
+                return None
+            # float() rather than trusting the result: this value is written
+            # into risk_log.jsonl, and anything non-numeric coming back from
+            # the broker would break serialisation and take the whole risk
+            # check down with it.
+            return float((clock.next_close - clock.timestamp).total_seconds())
+        except Exception as exc:
+            print(f"[RiskGuardrail] could not read market clock: {exc!r}")
+            return None
 
     def is_halted(self) -> bool:
         status = self._last_status or self.refresh()

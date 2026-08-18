@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -36,7 +37,11 @@ def guardrail(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MAX_DAILY_LOSS_PCT", 3.0)
     monkeypatch.setattr(config, "MAX_POSITION_PCT", 20.0)
     monkeypatch.setattr(config, "PDT_EQUITY_THRESHOLD", 25000.0)
-    return RiskGuardrail()
+    g = RiskGuardrail()
+    # Market shut by default, so these tests exercise sizing rules without the
+    # time-based exits joining in.
+    g.trading_client.get_clock.return_value = SimpleNamespace(is_open=False)
+    return g
 
 
 def test_daily_loss_halts_and_stays_halted_through_recovery(guardrail):
@@ -167,6 +172,45 @@ def test_total_exposure_is_tracked(guardrail):
     status = guardrail.refresh()
     assert status.total_position_value == 2500.0
     assert status.total_position_pct == 25.0
+
+
+def test_open_market_reports_seconds_to_close(guardrail):
+    from datetime import datetime, timedelta
+    now = datetime(2026, 8, 14, 15, 30)
+    guardrail.trading_client.get_clock.return_value = SimpleNamespace(
+        is_open=True, timestamp=now, next_close=now + timedelta(minutes=30))
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = []
+    assert guardrail.refresh().seconds_to_close == 1800.0
+
+
+def test_closed_market_reports_none_not_zero(guardrail):
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = []
+    assert guardrail.refresh().seconds_to_close is None
+
+
+def test_unusable_clock_does_not_break_the_risk_log(guardrail, tmp_path):
+    """This value is written to risk_log.jsonl. Anything non-numeric coming
+    back from the broker would break serialisation and take the whole risk
+    check down with it."""
+    guardrail.trading_client.get_clock.return_value = SimpleNamespace(
+        is_open=True, timestamp=object(), next_close=object())
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = []
+
+    status = guardrail.refresh()          # must not raise
+    assert status.seconds_to_close is None
+    # and the log line must still be valid JSON
+    written = (tmp_path / "risk_log.jsonl").read_text().strip().splitlines()[-1]
+    assert json.loads(written)["seconds_to_close"] is None
+
+
+def test_held_symbols_are_reported_for_the_time_exits(guardrail):
+    guardrail.trading_client.get_account.return_value = make_account(equity=10000, last_equity=10000)
+    guardrail.trading_client.get_all_positions.return_value = [
+        make_position("AAPL", 1000), make_position("NVDA", 1500)]
+    assert guardrail.refresh().held_symbols == ["AAPL", "NVDA"]
 
 
 def test_evaluate_order_allowed(guardrail):
