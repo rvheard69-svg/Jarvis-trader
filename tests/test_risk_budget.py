@@ -114,6 +114,40 @@ def test_group_caps_summing_to_the_total_makes_the_total_inert():
     assert "total cap can never fire" in problems[0]
 
 
+def test_shipped_config_is_coherent_and_complete():
+    """The defaults in config.py must survive their own validation — an
+    incoherent shipped default would fail only at runtime, on a real account."""
+    limits, stops = rb.from_config()
+    assert limits.unreachable_caps(n_groups=len(stops)) == []
+    assert set(stops) == {SP500, NASDAQ100}
+    assert all(v > 0 for v in stops.values())
+
+
+def test_configured_stops_reflect_the_measured_atr_ratio():
+    """Both underlyings get the same ATR multiple. If someone re-tunes one
+    without the other, the tighter side gets stopped out disproportionately —
+    the exact flaw in the original hand-picked values."""
+    _, stops = rb.from_config()
+    # 2x median 15-min ATR: S&P 19.8pts, Nasdaq 121.1pts at the measured levels.
+    assert 15 <= stops[SP500] <= 25
+    assert 100 <= stops[NASDAQ100] <= 140
+
+
+def test_incoherent_config_refuses_to_load(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "RISK_PER_GROUP_PCT", 1.0)   # 1.0 x 2 <= 2.0
+    monkeypatch.setattr(config, "RISK_TOTAL_PCT", 2.0)
+    with pytest.raises(RuntimeError, match="never fire"):
+        rb.from_config()
+
+
+def test_missing_stop_distance_refuses_to_load(monkeypatch):
+    import config
+    monkeypatch.setattr(config, "FUTURES_STOP_POINTS", {SP500: 20.0})
+    with pytest.raises(RuntimeError, match="NASDAQ100"):
+        rb.from_config()
+
+
 def test_per_trade_above_per_group_is_flagged():
     problems = RiskLimits(per_trade_pct=2.0, per_group_pct=1.0, total_pct=5.0).unreachable_caps()
     assert any("per_trade can never bind" in p for p in problems)

@@ -116,6 +116,35 @@ def redact_secrets(text: str) -> str:
     return text
 
 
+# --- Futures port -----------------------------------------------------------
+# Not read by the equity app. These are the settings the IB port will use;
+# they live here so there is one place to tune them, and so .env can override
+# without a code change.
+
+# Stop distance per underlying, in index points. Derived from real bars rather
+# than chosen: 2x the median 15-minute ATR, which matches the strategy's own
+# timescale (RSI over 14 one-minute bars, 10-minute signal cooldown, and a
+# 13-minute observed round-trip). Measured 2026-08 from SPY/QQQ as index
+# proxies — ATR taken as a percent of price, so no ETF-to-index ratio is
+# assumed. Re-derive from actual MES/MNQ bars once CME data is live.
+#
+# The same ATR multiple is applied to both, deliberately: an earlier pair of
+# hand-picked values used 2.0x on the S&P and 0.8x on the Nasdaq, which would
+# have stopped Nasdaq positions out far more often for no principled reason.
+FUTURES_STOP_POINTS = {
+    "SP500": float(os.getenv("STOP_POINTS_SP500", "20")),        # ~2x 15-min ATR
+    "NASDAQ100": float(os.getenv("STOP_POINTS_NASDAQ100", "120")),  # ~2x 15-min ATR
+}
+
+# Risk limits, as a percent of equity. Denominated in dollars-at-risk, not
+# notional — see risk_budget.py for why notional cannot be the basis once
+# sizing is risk-based. per_group exceeds total/2 on purpose so the total cap
+# can actually fire; risk_budget.RiskLimits.unreachable_caps() checks that.
+RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.5"))
+RISK_PER_GROUP_PCT = float(os.getenv("RISK_PER_GROUP_PCT", "1.5"))
+RISK_TOTAL_PCT = float(os.getenv("RISK_TOTAL_PCT", "2.0"))
+
+
 def _is_placeholder(val: str) -> bool:
     """
     .env.example ships values like `your_bot_token_from_botfather`. Those are

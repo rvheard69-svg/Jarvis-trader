@@ -91,6 +91,47 @@ class RiskLimits:
         return equity * self.total_pct / 100
 
 
+def from_config() -> tuple[RiskLimits, dict[str, float]]:
+    """
+    The configured limits and stop distances, as (limits, stop_points).
+
+    Raises if the configured limits are incoherent — a cap that can never fire
+    reads as protection during review and provides none at runtime, so it
+    should stop the app rather than be discovered after a loss.
+    """
+    import config
+
+    limits = RiskLimits(
+        per_trade_pct=config.RISK_PER_TRADE_PCT,
+        per_group_pct=config.RISK_PER_GROUP_PCT,
+        total_pct=config.RISK_TOTAL_PCT,
+    )
+    stop_points = dict(config.FUTURES_STOP_POINTS)
+
+    # Completeness first. The coherence check below depends on how many
+    # underlyings there are, so an incomplete config checked in the other
+    # order reports a misleading "incoherent limits" error for what is
+    # really a missing stop distance.
+    groups = {spec.group for spec in cs.SPECS.values()}
+    missing = groups - set(stop_points)
+    if missing:
+        raise RuntimeError(
+            f"no stop distance configured for {sorted(missing)} — sizing and the "
+            f"stop loss both need one per underlying"
+        )
+
+    # Group count comes from the contracts, not from the config: it is a fact
+    # about what is tradeable, and reading it from stop_points would let a
+    # truncated config silently relax the coherence rule.
+    problems = limits.unreachable_caps(n_groups=len(groups))
+    if problems:
+        raise RuntimeError(
+            "risk limits are incoherent — one cap is masked by another and can "
+            "never fire:\n  " + "\n  ".join(problems)
+        )
+    return limits, stop_points
+
+
 def risk_of(micros: int, group: str, stop_points: dict[str, float]) -> float:
     """
     Dollars lost if `micros` of exposure in `group` goes to its stop.
