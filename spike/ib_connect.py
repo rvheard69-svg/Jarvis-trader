@@ -159,6 +159,13 @@ async def main(symbol: str, host: str, client_id: int, seconds: int) -> int:
             record(PASS, "margin returned",
                    f"1 {symbol}: init ${float(init_m):,.2f}, maint ${float(maint_m):,.2f}")
             record(PASS, "sizing can query margin at runtime", "no hardcoded margin needed")
+        elif state == []:
+            # whatIfOrderAsync declares -> OrderState but returns the raw
+            # future's default when IB never answers. Observed when the
+            # account lacks market data for the contract: IB cannot price it,
+            # so it computes no margin impact and sends nothing back.
+            record(FAIL, "whatIfOrder returned nothing",
+                   "IB sent no OrderState — same root cause as missing bars: no market data permission")
         else:
             record(FAIL, "whatIfOrder returned no margin", f"got {state!r}"[:120])
 
