@@ -83,7 +83,7 @@ class Executor:
     # --- orchestration -------------------------------------------------------
 
     async def process(self, signal: Signal) -> None:
-        if signal.kind not in ("rsi_oversold", "rsi_overbought"):
+        if signal.kind not in ("rsi_oversold", "rsi_overbought", "orb_fade_buy", "orb_fade_sell"):
             return  # not a trade-rule signal — the Analyst handles narration for everything else
 
         if signal.symbol in self._pending:

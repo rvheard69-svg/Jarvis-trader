@@ -51,7 +51,7 @@ class FuturesExecutor:
     # --- orchestration ---------------------------------------------------
 
     async def process_signal(self, symbol: str, kind: str, rsi: float) -> None:
-        if kind not in ("rsi_oversold", "rsi_overbought"):
+        if kind not in ("rsi_oversold", "rsi_overbought", "orb_fade_buy", "orb_fade_sell"):
             return  # not a trade-rule signal
 
         group = cs.group_of(symbol)

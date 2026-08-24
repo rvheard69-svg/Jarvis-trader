@@ -192,6 +192,38 @@ Analyst's explanation to decide direction. `strategy.py` is intentionally
 the smallest possible rule that exercises the whole pipeline — replace it,
 not the plumbing around it, if you want different trade logic.
 
+## Futures (IB) — experimental, off by default
+
+A second, parallel pipeline for MES/MNQ futures via Interactive Brokers,
+built the same way as the equity one but reading dollars-at-risk instead of
+percent-of-notional (`contract_specs.py` / `risk_budget.py`, since a single
+percentage can't size both a mini and a micro contract sensibly). Same
+shape: `futures_watcher.py`'s RSI/ORB-fade signals → `futures_strategy.py`'s
+rule → `risk_budget.evaluate()` → the same Telegram yes/no confirmation →
+a paper order via `ib_broker.py`.
+
+**Off by default (`FUTURES_ENABLED=false` in `.env.example`) — read this
+before turning it on:**
+
+- **Unverified against real IB.** The phase-1 spike (`spike/ib_connect.py`)
+  found real-time bars and margin previews both blocked on the tested
+  account (no CME futures market data subscription). Contract resolution
+  worked. Everything downstream of that is unit-tested against a mocked IB
+  connection, not a real one — re-run the spike and confirm bars actually
+  arrive before you trust this to generate real signals.
+- **No futures stop-loss or time-exit.** `risk_monitor_loop` (equity) polls
+  Alpaca for `STOP_LOSS_PCT`/`FLATTEN_BEFORE_CLOSE_MINUTES`; nothing
+  equivalent polls IB yet, so a futures position won't get cut
+  automatically the way a stock position does.
+- **Requires IB Gateway or TWS running** with the API enabled — see
+  `spike/ib_connect.py`'s `CHECKLIST` for setup steps — on a **paper** port
+  (`IB_PORT`, default 4002). `config.validate()` and `ib_broker.py` both
+  refuse to start against a live port (7496/4001).
+
+To turn it on: set `FUTURES_ENABLED=true`, confirm `IB_HOST`/`IB_PORT`
+point at your paper Gateway/TWS, and start `python main.py` as usual — it
+prints `Watching futures: ...` on startup when the flag is on.
+
 ## Keeping this running unattended
 
 Two layers of resilience, since a day-trading assistant that silently dies

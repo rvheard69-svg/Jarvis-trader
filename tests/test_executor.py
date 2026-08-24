@@ -255,6 +255,27 @@ async def test_failed_send_short_circuits_without_polling(monkeypatch, tmp_path)
     assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
 
 
+async def test_orb_fade_buy_reaches_submission(monkeypatch, tmp_path):
+    """Regression: process() used to filter signal.kind down to
+    rsi_oversold/rsi_overbought before decide() ever saw it, so an
+    orb_fade_buy signal — despite strategy.decide() handling it — was
+    silently dropped and never proposed a trade."""
+    guardrail = FakeGuardrail(equity=10000.0, allowed=True)
+    ex = make_executor(guardrail, position_qty=0.0)
+    ex.trading_client.submit_order.return_value = SimpleNamespace(id="order-orb-1")
+
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
+        json_response({"result": []}),
+        json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "yes"}}]}),
+    ]))
+
+    signal = Signal(symbol="AAPL", kind="orb_fade_buy", price=100.0, detail={"rsi": 25, "orb": "fade_down"})
+    await ex.process(signal)
+
+    ex.trading_client.submit_order.assert_called_once()
+    assert last_log_entry(tmp_path)["outcome"] == "submitted"
+
+
 async def test_duplicate_signal_on_pending_symbol_is_dropped(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)

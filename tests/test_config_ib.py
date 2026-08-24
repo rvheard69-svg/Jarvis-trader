@@ -10,6 +10,10 @@ def test_ib_defaults_point_at_a_paper_port():
     assert config.IB_PORT in config.IB_PAPER_PORTS
 
 
+def test_futures_disabled_by_default():
+    assert config.FUTURES_ENABLED is False
+
+
 def test_validate_refuses_a_live_ib_port(monkeypatch):
     monkeypatch.setattr(config, "ALPACA_API_KEY", "k")
     monkeypatch.setattr(config, "ALPACA_SECRET_KEY", "k")

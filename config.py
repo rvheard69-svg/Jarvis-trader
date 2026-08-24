@@ -189,6 +189,13 @@ IB_LIVE_PORTS = {7496, 4001}   # TWS LIVE, IB Gateway LIVE — validate() refuse
 # discovering an unknown symbol mid-session.
 FUTURES_WATCHLIST = _get_list("FUTURES_WATCHLIST", "MES,MNQ")
 
+# Off by default: main.py only starts futures_watcher.py / futures_executor.py
+# / ib_broker.py when this is explicitly turned on. Most installs have no IB
+# Gateway running at all, and this path is unverified against real IB market
+# data (see ib_broker.py's module docstring) — it should never surprise an
+# equity-only user with constant connection retries in the log.
+FUTURES_ENABLED = _get_bool("FUTURES_ENABLED", False)
+
 
 def _is_placeholder(val: str) -> bool:
     """

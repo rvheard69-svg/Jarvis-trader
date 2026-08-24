@@ -168,6 +168,20 @@ async def test_one_leg_failing_does_not_stop_the_other(monkeypatch, tmp_path):
     assert outcomes["MES"] == "submitted"
 
 
+async def test_orb_fade_buy_reaches_submission(monkeypatch, tmp_path):
+    """Regression: process_signal() used to filter kind down to
+    rsi_oversold/rsi_overbought before decide() ever saw it, so an
+    orb_fade_buy signal — despite futures_strategy.decide() handling it —
+    was silently dropped and never proposed a trade."""
+    broker = FakeBroker(positions={})
+    ex = FuturesExecutor(broker)
+    approve(monkeypatch)
+
+    await ex.process_signal("MES", "orb_fade_buy", rsi=25)
+
+    assert broker.orders == [("ES", "BUY", 1), ("MES", "BUY", 2)]
+
+
 # --- dedup ---------------------------------------------------------------
 
 async def test_duplicate_signal_on_pending_group_is_dropped(monkeypatch, tmp_path):
