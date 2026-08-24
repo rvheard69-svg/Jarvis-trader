@@ -215,9 +215,14 @@ before turning it on:**
   positions the same way `risk_monitor_loop` polls Alpaca, and closes
   anything that has moved `FUTURES_STOP_POINTS` against its entry
   (`futures_stop_loss.py`) — no confirmation needed, same as the equity
-  stop loss. There is still no futures equivalent of
-  `FLATTEN_BEFORE_CLOSE_MINUTES`/`MAX_HOLD_MINUTES` — a position with no
-  stop hit is held indefinitely.
+  stop loss. **Time exits too** (`futures_time_exit.py`):
+  `FUTURES_MAX_HOLD_MINUTES` closes a position held too long, and
+  `FUTURES_FLATTEN_BEFORE_WEEKLY_CLOSE_MINUTES` flattens everything before
+  CME's weekly close (Friday ~17:00 America/New_York) rather than carry it
+  over the weekend — a *weekly*, not daily, boundary, since these
+  contracts trade nearly 24 hours a day with no single daily close (the
+  ~17:00-18:00 ET daily maintenance halt is deliberately not treated as
+  one). Does not account for the CME holiday calendar.
 - **Requires IB Gateway or TWS running** with the API enabled — see
   `spike/ib_connect.py`'s `CHECKLIST` for setup steps — on a **paper** port
   (`IB_PORT`, default 4002). `config.validate()` and `ib_broker.py` both

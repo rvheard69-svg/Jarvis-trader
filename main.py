@@ -25,13 +25,17 @@ and FuturesExecutor (futures_strategy.py's rule -> risk_budget.evaluate()
 default — see config.FUTURES_ENABLED and ib_broker.py's module docstring
 for why.
 
-futures_risk_monitor_loop is the futures-side stop loss: it polls IB
-positions on the same cadence risk_monitor_loop uses for Alpaca
-(RISK_CHECK_INTERVAL_SECONDS) and closes anything that has moved
-FUTURES_STOP_POINTS against its entry (futures_stop_loss.py), using the
+futures_risk_monitor_loop covers both futures-side risk exits, same cadence
+risk_monitor_loop uses for Alpaca (RISK_CHECK_INTERVAL_SECONDS), reading
 current price from futures_watcher's own bars rather than a second IB
-subscription. There is still no futures time-exit equivalent
-(FLATTEN_BEFORE_CLOSE_MINUTES/MAX_HOLD_MINUTES) — stop loss only.
+subscription:
+  - stop loss (futures_stop_loss.py): closes anything that has moved
+    FUTURES_STOP_POINTS against its entry.
+  - time exit (futures_time_exit.py): closes a position held past
+    FUTURES_MAX_HOLD_MINUTES, or flattens everything before CME's weekly
+    close (Friday ~17:00 America/New_York) — the futures equivalent of
+    MAX_HOLD_MINUTES/FLATTEN_BEFORE_CLOSE_MINUTES, on a weekly rather than
+    daily boundary. See futures_time_exit.py for why.
 """
 import asyncio
 import sys
@@ -56,8 +60,11 @@ from notifier import send as notify
 from risk_guardrail import RiskGuardrail
 
 if config.FUTURES_ENABLED:
+    from datetime import datetime, timezone
+
     import contract_specs as cs
     import futures_stop_loss
+    import futures_time_exit
     import risk_budget as rb
     from futures_watcher import FuturesWatcher
     from futures_executor import FuturesExecutor
@@ -225,13 +232,16 @@ def _notify_risk_event(title: str, body: str) -> None:
 
 async def futures_risk_monitor_loop(broker, futures_watcher, futures_executor) -> None:
     """
-    The futures-side stop loss: polls IB positions on the same cadence
-    risk_monitor_loop uses for Alpaca and closes anything that has moved
-    FUTURES_STOP_POINTS against its entry (futures_stop_loss.py). Current
-    price per group comes from futures_watcher's own finalized bars — the
-    same ones already driving RSI/ORB — rather than a second IB
-    subscription. No halt/PDT/oversized-position equivalent here yet;
-    those are Alpaca-account concepts. Stop loss only, no time-exit.
+    Polls IB positions on the same cadence risk_monitor_loop uses for
+    Alpaca and runs both futures risk exits against the same snapshot: the
+    stop loss first (futures_stop_loss.py), then time-based exits
+    (futures_time_exit.py) — same ordering rationale as risk_monitor_loop
+    (a position the stop already closed is gone from `held_symbols` by the
+    *next* poll, not this one; the two cannot both act on it within a
+    single cycle because force_close on an already-flat position is a
+    harmless no-op reported as stop_loss_failed, not a double order).
+    No halt/PDT/oversized-position equivalent here yet; those are
+    Alpaca-account concepts.
 
     The whole cycle is wrapped in try/except: unlike RiskGuardrail.refresh()
     (which returns its last known status on an Alpaca error), IBBroker has
@@ -244,6 +254,7 @@ async def futures_risk_monitor_loop(broker, futures_watcher, futures_executor) -
             if positions:
                 limits, stop_points = rb.from_config()
                 current_prices = _current_futures_prices(futures_watcher)
+
                 for hit in futures_stop_loss.find_stopped_out(positions, current_prices, stop_points):
                     reason = (
                         f"{hit.points_against:.1f}pts against entry {hit.entry_price:.2f}, "
@@ -251,6 +262,18 @@ async def futures_risk_monitor_loop(broker, futures_watcher, futures_executor) -
                     )
                     print(f"[main] FUTURES STOP LOSS triggered: {hit.symbol} — {reason}")
                     await futures_executor.force_close(hit.symbol, int(positions[hit.symbol].qty), reason)
+
+                held_symbols = [symbol for symbol, d in positions.items() if d.qty > 0]
+                exits = futures_time_exit.due(
+                    held_symbols=held_symbols,
+                    entries=futures_time_exit.entry_times(config.FUTURES_EXECUTION_LOG_PATH),
+                    seconds_to_weekly_close=futures_time_exit.seconds_to_weekly_close(datetime.now(timezone.utc)),
+                    max_hold_minutes=config.FUTURES_MAX_HOLD_MINUTES,
+                    flatten_before_close_minutes=config.FUTURES_FLATTEN_BEFORE_WEEKLY_CLOSE_MINUTES,
+                )
+                for exit_ in exits:
+                    print(f"[main] FUTURES TIME EXIT: {exit_.symbol} — {exit_.reason}")
+                    await futures_executor.force_close(exit_.symbol, int(positions[exit_.symbol].qty), exit_.reason)
         except Exception as exc:
             print(f"[main] futures risk monitor failed this cycle: {exc!r}")
 
