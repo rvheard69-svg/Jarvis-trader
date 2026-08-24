@@ -1,0 +1,54 @@
+# IBC (https://github.com/IbcAlpha/IBC) config template for an unattended,
+# auto-logging-in IB Gateway — paper trading only, matching this project's
+# own refusal to touch a live port (config.py / ib_broker.py).
+#
+# This file is a TEMPLATE, not the real config: it's checked into git, so it
+# must never contain a real username or password. start_gateway.sh/.bat
+# render it into IBC's own directory (outside this repo) with the
+# placeholders below filled in from your .env — that rendered copy holds
+# your real credentials and must never be committed anywhere.
+#
+# IBC ships its own, more complete config.ini with every setting documented
+# inline — treat this as the minimum needed for headless paper auto-login,
+# not a replacement for IBC's own reference.
+
+IbLoginId=${IB_USERNAME}
+IbPassword=${IB_PASSWORD}
+
+# Paper only. IBC also accepts "live" — this project never should, and
+# config.validate()/ib_broker.py both refuse to connect to a live port
+# regardless of what Gateway itself is logged into.
+TradingMode=paper
+
+# Gateway asks "another session is already logged in for this account, log
+# this session in and terminate the other?" when you (or an old process)
+# left a session open elsewhere. IBC needs a fixed answer since there's no
+# one to click a dialog — this project only ever runs one Gateway instance
+# at a time, so taking over is safe.
+ExistingSessionDetectedAction=primary
+
+# API clients (this app included) connecting from a new address get an
+# "accept this connection?" popup — same problem as above, no one to click
+# it. Restrict trust to localhost via TrustedTwsApiClientIPs below rather
+# than accepting from anywhere.
+AcceptIncomingConnectionAction=accept
+TrustedTwsApiClientIPs=127.0.0.1
+
+# Keep the API read-write (order submission needs this) — matches
+# .env.example's IB_PORT default (4002, Gateway paper). If you run TWS
+# instead of Gateway, IBC has separate Tws* settings; see IBC's own
+# config.ini.
+ReadOnlyApi=no
+OverrideTwsApiPort=${IB_PORT}
+
+# Gateway auto-restarts once every 24h by default and otherwise waits for a
+# manual relogin — these two make that restart happen unattended instead of
+# hanging at a login screen someone has to notice and click through.
+IbAutoClosedown=no
+AcceptNonBrokerageAccountWarning=yes
+
+# No GUI session babysitting this — minimize to reduce resource use, and
+# don't block on informational dialogs IBC can dismiss on its own.
+MinimizeMainWindow=yes
+SuppressInfoMessages=yes
+DismissPasswordExpiryWarning=yes

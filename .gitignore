@@ -11,3 +11,8 @@ HALT
 .pytest_cache/
 
 jarvis.lock
+
+# Real IBC config.ini should render into IBC_PATH (outside this repo), but
+# ignore it here too in case that ever points inside the tree by mistake —
+# it holds a real IB password.
+scripts/ibc/config.ini

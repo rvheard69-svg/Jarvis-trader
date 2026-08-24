@@ -226,7 +226,9 @@ before turning it on:**
 - **Requires IB Gateway or TWS running** with the API enabled — see
   `spike/ib_connect.py`'s `CHECKLIST` for setup steps — on a **paper** port
   (`IB_PORT`, default 4002). `config.validate()` and `ib_broker.py` both
-  refuse to start against a live port (7496/4001).
+  refuse to start against a live port (7496/4001). To skip the manual
+  login-screen click-through every session, see `scripts/ibc/` under
+  "Automating Gateway login" below.
 
 To turn it on: set `FUTURES_ENABLED=true`, confirm `IB_HOST`/`IB_PORT`
 point at your paper Gateway/TWS, and start `python main.py` as usual — it
@@ -267,6 +269,28 @@ remember to launch it each morning):
   `launchctl load` it.
 - **Windows (Task Scheduler)**: create a task triggered "At log on," action
   = `scripts\run_forever.bat`, "Start in" = the project folder.
+
+**Automating Gateway login too** (only relevant if `FUTURES_ENABLED=true`):
+`run_forever.sh`/boot scripts above assume IB Gateway is already logged in
+— by default that means clicking through Gateway's login screen yourself
+every morning, and again every 24h when it auto-restarts. `scripts/ibc/`
+uses [IBC](https://github.com/IbcAlpha/IBC) to automate that:
+
+```bash
+./scripts/ibc/start_gateway.sh      # macOS / Linux
+scripts\ibc\start_gateway.bat       # native Windows
+```
+
+One-time setup (see the comments at the top of `scripts/ibc/start_gateway.sh`
+for the full walkthrough): download IBC, install it **outside this repo**,
+and set `IB_USERNAME` / `IB_PASSWORD` / `IBC_PATH` /
+`IBC_GATEWAY_MAJOR_VERSION` in `.env`. The script renders
+`scripts/ibc/config.ini.template` into IBC's own directory with those
+values filled in — that rendered file holds your real password and is never
+part of this repo (`.gitignore`'d as defense-in-depth even though it should
+never land here in the first place). This only starts Gateway; chain it
+before `run_forever.sh`/`.bat` in your boot automation if you want the
+whole stack — Gateway included — to come up unattended.
 
 ## Staying up to date
 
