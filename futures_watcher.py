@@ -4,6 +4,13 @@ The futures Watcher: streams IB real-time bars, aggregates them into
 rsi_oversold/rsi_overbought signals futures_strategy.py understands. Same
 role as watcher.py, one layer of market-data reality removed.
 
+Also runs an OrbTracker (orb.py) per symbol on the same finalized bars. A
+failed opening-range breakout only becomes a signal (orb_fade_buy /
+orb_fade_sell) when RSI also confirms it at that same bar — RSI is the
+gate, not an independent trigger, so a fade with no RSI extreme behind it
+stays silent. See orb.py for what "session" means here and its stated
+limitation on a 24-hour futures market.
+
 Why aggregation is needed at all: IB's reqRealTimeBars only offers 5-second
 bars — the phase-1 spike confirmed this (spike/ib_connect.py check 3) and
 noted "aggregation to 1m is required." RSI_PERIOD (config.py) is tuned
@@ -42,6 +49,7 @@ from ib_async import IB, ContFuture
 import config
 import contract_specs as cs
 from indicators import compute_rsi
+from orb import OrbTracker
 from watcher import Signal
 
 RECONNECT_BASE_DELAY = 5     # seconds
@@ -65,6 +73,9 @@ class FuturesWatcher:
         self.bars: dict[str, pd.DataFrame] = {symbol: _empty_bars() for symbol in config.FUTURES_WATCHLIST}
         self._minute_buffer: dict[str, list] = {symbol: [] for symbol in config.FUTURES_WATCHLIST}
         self._current_minute: dict[str, object] = {}  # symbol -> the minute currently buffering
+        self._orb: dict[str, OrbTracker] = {
+            symbol: OrbTracker(config.ORB_WINDOW_MINUTES) for symbol in config.FUTURES_WATCHLIST
+        }
         self._last_fired: dict[tuple[str, str], float] = {}  # (symbol, kind) -> timestamp
         self.ib = IB()
 
@@ -96,18 +107,20 @@ class FuturesWatcher:
         if not buf:
             return
 
+        timestamp = buf[0].time
+        high = max(b.high for b in buf)
+        low = min(b.low for b in buf)
+        close = buf[-1].close
+
         df = self.bars[symbol]
-        df.loc[len(df)] = [
-            buf[0].time, buf[0].open_,
-            max(b.high for b in buf), min(b.low for b in buf),
-            buf[-1].close, sum(b.volume for b in buf),
-        ]
+        df.loc[len(df)] = [timestamp, buf[0].open_, high, low, close, sum(b.volume for b in buf)]
         if len(df) > 500:
             df = df.tail(500).reset_index(drop=True)
         self.bars[symbol] = df
         self._minute_buffer[symbol] = []
 
-        self._check_triggers(symbol, float(buf[-1].close))
+        fade = self._orb[symbol].update(timestamp=timestamp, high=high, low=low, close=close)
+        self._check_triggers(symbol, float(close), fade)
 
     # --- triggers ------------------------------------------------------------
 
@@ -118,18 +131,31 @@ class FuturesWatcher:
     def _mark_fired(self, symbol: str, kind: str) -> None:
         self._last_fired[(symbol, kind)] = time.time()
 
-    def _check_triggers(self, symbol: str, price: float) -> None:
+    def _emit(self, symbol: str, kind: str, price: float, rsi: float, fade: str | None = None) -> None:
+        self._mark_fired(symbol, kind)
+        detail = {"rsi": rsi}
+        if fade is not None:
+            detail["orb"] = fade
+        self.signal_queue.put_nowait(Signal(symbol=symbol, kind=kind, price=price, detail=detail))
+
+    def _check_triggers(self, symbol: str, price: float, fade: str | None) -> None:
         rsi = compute_rsi(self.bars[symbol]["close"], config.RSI_PERIOD)
         if rsi is None:
             return
 
         if rsi >= config.RSI_OVERBOUGHT and not self._on_cooldown(symbol, "rsi_overbought"):
-            self._mark_fired(symbol, "rsi_overbought")
-            self.signal_queue.put_nowait(Signal(symbol=symbol, kind="rsi_overbought", price=price, detail={"rsi": rsi}))
+            self._emit(symbol, "rsi_overbought", price, rsi)
 
         if rsi <= config.RSI_OVERSOLD and not self._on_cooldown(symbol, "rsi_oversold"):
-            self._mark_fired(symbol, "rsi_oversold")
-            self.signal_queue.put_nowait(Signal(symbol=symbol, kind="rsi_oversold", price=price, detail={"rsi": rsi}))
+            self._emit(symbol, "rsi_oversold", price, rsi)
+
+        # ORB fade: RSI is the confirmation, not an independent trigger — a
+        # failed breakout with no RSI extreme behind it stays unconfirmed.
+        if fade == "fade_up" and rsi >= config.RSI_OVERBOUGHT and not self._on_cooldown(symbol, "orb_fade_sell"):
+            self._emit(symbol, "orb_fade_sell", price, rsi, fade)
+
+        if fade == "fade_down" and rsi <= config.RSI_OVERSOLD and not self._on_cooldown(symbol, "orb_fade_buy"):
+            self._emit(symbol, "orb_fade_buy", price, rsi, fade)
 
     # --- connection / subscription ------------------------------------------
 

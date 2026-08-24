@@ -96,6 +96,11 @@ with anything beyond alerts.
 - **RSI overbought / oversold** — `RSI_OVERBOUGHT` / `RSI_OVERSOLD` (default 70 / 30)
 - **Volume spike** — current bar's volume vs. trailing 20-bar average, `VOLUME_SPIKE_MULT` (default 2.5x)
 - **VWAP cross** — price crossing the rolling VWAP in either direction
+- **ORB fade** — a failed Opening Range Breakout: price pokes outside the
+  first `ORB_WINDOW_MINUTES` (default 15) of the session's high/low range,
+  then closes back inside it. Only becomes a signal (`orb_fade_buy` /
+  `orb_fade_sell`) when RSI also confirms it on that same bar — RSI is the
+  gate, not an independent trigger. See `orb.py`.
 
 `SIGNAL_COOLDOWN_SECONDS` (default 600) stops the same trigger firing
 repeatedly for the same symbol while a condition stays true — otherwise
@@ -148,6 +153,9 @@ built to be boring on purpose. Three independent things all have to be true:
      at `TRADE_SIZE_PCT` of equity (default 5%, well under the Guardrail's
      20% position cap).
    - RSI overbought + you hold the symbol → propose closing that position.
+   - ORB fade (`orb_fade_buy` / `orb_fade_sell`, already RSI-confirmed by
+     the Watcher — see "Current triggers" above) follows the exact same two
+     rules, just with a different reason string.
    - Every other signal (volume spike, VWAP cross) never reaches this rule
      at all — those stay Analyst-narrated only, same as before.
 2. **The Risk Guardrail clears it** — `evaluate_order()` checks the halt

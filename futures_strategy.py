@@ -18,6 +18,11 @@ Rule, deliberately as narrow as the equity one:
   - RSI overbought -> propose closing EVERY contract currently held in that
                       group, not just whichever symbol's RSI triggered — a
                       position split across ES and MES has to close both.
+  - orb_fade_buy / orb_fade_sell (see orb.py + futures_watcher.py) follow
+    the exact same two rules as rsi_oversold/rsi_overbought — the Watcher
+    already requires RSI confirmation before emitting an ORB fade, so there
+    is nothing left to check here beyond group-flat / group-held. Only the
+    reason string differs.
   - Every other signal kind proposes nothing, same as strategy.py.
 
 This is the proposal layer only. Nothing here checks risk_budget's caps —
@@ -50,7 +55,7 @@ def decide(symbol: str, kind: str, positions: dict[str, float], equity: float, r
 
     group = cs.group_of(symbol)
 
-    if kind == "rsi_oversold":
+    if kind in ("rsi_oversold", "orb_fade_buy"):
         if cs.micros_held(positions).get(group, 0) != 0:
             return None  # already holding this underlying — rule doesn't average down
 
@@ -60,15 +65,15 @@ def decide(symbol: str, kind: str, positions: dict[str, float], equity: float, r
         if micros <= 0:
             return None  # equity too small (or stop too wide) to size even one micro
 
-        return FuturesProposal(
-            group=group,
-            side="open",
-            contracts=cs.fill(group, micros),
-            add_micros=micros,
-            reason=f"RSI oversold ({rsi}) on {symbol} with {group} flat — risking ${target_risk:,.0f}",
+        reason = (
+            f"RSI oversold ({rsi}) on {symbol} with {group} flat — risking ${target_risk:,.0f}"
+            if kind == "rsi_oversold"
+            else f"ORB fade: reclaimed the opening range low on {symbol}, RSI oversold ({rsi}), "
+                 f"{group} flat — risking ${target_risk:,.0f}"
         )
+        return FuturesProposal(group=group, side="open", contracts=cs.fill(group, micros), add_micros=micros, reason=reason)
 
-    if kind == "rsi_overbought":
+    if kind in ("rsi_overbought", "orb_fade_sell"):
         held = {
             held_symbol: int(qty)
             for held_symbol, qty in positions.items()
@@ -77,12 +82,12 @@ def decide(symbol: str, kind: str, positions: dict[str, float], equity: float, r
         if not held:
             return None  # nothing in this group to close
 
-        return FuturesProposal(
-            group=group,
-            side="close",
-            contracts=held,
-            add_micros=0,
-            reason=f"RSI overbought ({rsi}) on {symbol} — closing entire {group} position ({held})",
+        reason = (
+            f"RSI overbought ({rsi}) on {symbol} — closing entire {group} position ({held})"
+            if kind == "rsi_overbought"
+            else f"ORB fade: rejected the opening range high on {symbol}, RSI overbought ({rsi}) — "
+                 f"closing entire {group} position ({held})"
         )
+        return FuturesProposal(group=group, side="close", contracts=held, add_micros=0, reason=reason)
 
     return None

@@ -45,6 +45,11 @@ RSI_PERIOD = 14
 VWAP_LOOKBACK_BARS = 60  # minute bars -> ~1 trading hour
 VOLUME_AVG_LOOKBACK = 20
 
+# Opening Range Breakout fade (orb.py). Shared by both watcher.py and
+# futures_watcher.py — see orb.py's module docstring for what "session"
+# means for each, and its real limitation on the futures side.
+ORB_WINDOW_MINUTES = int(os.getenv("ORB_WINDOW_MINUTES", "15"))
+
 # Local audit log (every signal + every Analyst response gets appended here)
 LOG_PATH = os.getenv("LOG_PATH", "signals_log.jsonl")
 

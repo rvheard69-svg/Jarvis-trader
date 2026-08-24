@@ -3,6 +3,10 @@ The Watcher: streams live bars from Alpaca, keeps a rolling price/volume
 history per symbol, computes indicators, and decides when something is
 worth handing to the Analyst. No LLM calls happen in this file — triggers
 fire on deterministic math so they're reproducible and debuggable.
+
+Also runs an OrbTracker (orb.py) per symbol. A failed opening-range
+breakout only becomes a signal (orb_fade_buy/orb_fade_sell) when RSI also
+confirms it on the same bar — see orb.py for the fade rule itself.
 """
 import asyncio
 import time
@@ -14,6 +18,7 @@ from alpaca.data.enums import DataFeed
 
 import config
 from indicators import compute_rsi, compute_vwap, compute_volume_ratio, compute_sma
+from orb import OrbTracker
 
 RECONNECT_BASE_DELAY = 5    # seconds
 RECONNECT_MAX_DELAY = 300   # cap backoff at 5 minutes
@@ -37,6 +42,9 @@ class Watcher:
             for symbol in config.WATCHLIST
         }
         self._last_fired: dict[tuple[str, str], float] = {}  # (symbol, kind) -> timestamp
+        self._orb: dict[str, OrbTracker] = {
+            symbol: OrbTracker(config.ORB_WINDOW_MINUTES) for symbol in config.WATCHLIST
+        }
         self.stream: StockDataStream | None = None
         self._build_stream()
 
@@ -73,9 +81,25 @@ class Watcher:
         sma20 = compute_sma(df["close"], 20)
         price = float(bar.close)
 
-        await self._check_triggers(symbol, price, rsi, vwap, vol_ratio, sma20)
+        fade = self._orb[symbol].update(timestamp=bar.timestamp, high=bar.high, low=bar.low, close=bar.close)
+        await self._check_triggers(symbol, price, rsi, vwap, vol_ratio, sma20, fade)
 
-    async def _check_triggers(self, symbol, price, rsi, vwap, vol_ratio, sma20) -> None:
+    async def _check_triggers(self, symbol, price, rsi, vwap, vol_ratio, sma20, fade=None) -> None:
+        # ORB fade (orb.py): a failed opening-range breakout only becomes a
+        # signal when RSI also confirms it on this same bar — RSI is the
+        # gate, not an independent trigger.
+        if fade == "fade_up" and rsi is not None and rsi >= config.RSI_OVERBOUGHT and not self._on_cooldown(symbol, "orb_fade_sell"):
+            self._mark_fired(symbol, "orb_fade_sell")
+            await self.signal_queue.put(Signal(
+                symbol=symbol, kind="orb_fade_sell", price=price, detail={"rsi": rsi, "orb": fade},
+            ))
+
+        if fade == "fade_down" and rsi is not None and rsi <= config.RSI_OVERSOLD and not self._on_cooldown(symbol, "orb_fade_buy"):
+            self._mark_fired(symbol, "orb_fade_buy")
+            await self.signal_queue.put(Signal(
+                symbol=symbol, kind="orb_fade_buy", price=price, detail={"rsi": rsi, "orb": fade},
+            ))
+
         if rsi is not None and rsi >= config.RSI_OVERBOUGHT and not self._on_cooldown(symbol, "rsi_overbought"):
             self._mark_fired(symbol, "rsi_overbought")
             await self.signal_queue.put(Signal(

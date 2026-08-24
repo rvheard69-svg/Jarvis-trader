@@ -227,6 +227,61 @@ async def test_subscribe_raises_when_qualification_fails(monkeypatch):
         await w._subscribe_all()
 
 
+# --- ORB fade wiring -----------------------------------------------------
+
+def test_finalize_minute_feeds_the_orb_tracker():
+    w = make_watcher()
+    base = datetime(2026, 8, 24, 14, 30, 0)
+    w._on_realtime_bar("MES", rt_bar(base, 100.0, 101.0, 99.5, 100.5, 10))
+    w._on_realtime_bar("MES", rt_bar(minute(base, 1), 100.5, 100.6, 100.4, 100.5, 1))  # rolls the minute
+
+    assert w._orb["MES"].range_high == 101.0
+    assert w._orb["MES"].range_low == 99.5
+
+
+def seed_closes(w, symbol, closes, base):
+    """Directly seeds w.bars[symbol] with a synthetic closes history, so RSI
+    is deterministic without also having to drive real ORB breach state."""
+    df = w.bars[symbol]
+    for i, c in enumerate(closes):
+        df.loc[len(df)] = [minute(base, i), c, c, c, c, 1]
+    w.bars[symbol] = df
+
+
+def test_orb_fade_down_with_rsi_oversold_emits_orb_fade_buy():
+    w = make_watcher()
+    seed_closes(w, "MES", [100 - i for i in range(20)], datetime(2026, 8, 24, 9, 0, 0))  # RSI oversold
+    w._check_triggers("MES", price=80.0, fade="fade_down")
+    assert "orb_fade_buy" in {s.kind for s in drain(w)}
+
+
+def test_orb_fade_up_with_rsi_overbought_emits_orb_fade_sell():
+    w = make_watcher()
+    seed_closes(w, "MES", [100 + i for i in range(20)], datetime(2026, 8, 24, 9, 0, 0))  # RSI overbought
+    w._check_triggers("MES", price=120.0, fade="fade_up")
+    assert "orb_fade_sell" in {s.kind for s in drain(w)}
+
+
+def test_fade_without_matching_rsi_never_emits_the_orb_kind():
+    """A failed breakdown (fade_down, wants oversold) with RSI actually
+    overbought must not fire the ORB signal — the plain RSI kind can still
+    fire on its own, but the fade needs its own matching confirmation."""
+    w = make_watcher()
+    seed_closes(w, "MES", [100 + i for i in range(20)], datetime(2026, 8, 24, 9, 0, 0))  # overbought, not oversold
+    w._check_triggers("MES", price=120.0, fade="fade_down")
+    kinds = {s.kind for s in drain(w)}
+    assert "orb_fade_buy" not in kinds
+
+
+def test_no_fade_never_emits_an_orb_kind_even_with_matching_rsi():
+    w = make_watcher()
+    seed_closes(w, "MES", [100 - i for i in range(20)], datetime(2026, 8, 24, 9, 0, 0))  # oversold
+    w._check_triggers("MES", price=80.0, fade=None)
+    kinds = {s.kind for s in drain(w)}
+    assert "orb_fade_buy" not in kinds
+    assert "rsi_oversold" in kinds  # the plain RSI trigger is unaffected
+
+
 async def test_bar_handler_routes_the_latest_bar_only():
     """The event callback receives (bar_list, has_new_bar) — a growing list
     of every bar ever received, per ib_async's RealTimeBarList — so the

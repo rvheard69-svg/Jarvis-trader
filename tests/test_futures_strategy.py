@@ -102,3 +102,31 @@ def test_other_signal_kinds_never_propose_a_trade():
 def test_unknown_symbol_is_rejected():
     with pytest.raises(ValueError, match="CL"):
         fs.decide("CL", "rsi_oversold", positions={}, equity=EQUITY, rsi=25)
+
+
+# --- ORB fade (fails the same way rsi_oversold/rsi_overbought do) -----------
+
+def test_orb_fade_buy_with_flat_group_proposes_the_same_sized_open():
+    plain = fs.decide("MES", "rsi_oversold", positions={}, equity=EQUITY, rsi=25)
+    orb = fs.decide("MES", "orb_fade_buy", positions={}, equity=EQUITY, rsi=25)
+    assert orb is not None
+    assert orb.side == "open"
+    assert orb.add_micros == plain.add_micros
+    assert orb.contracts == plain.contracts
+    assert "ORB fade" in orb.reason
+
+
+def test_orb_fade_buy_does_not_average_down():
+    assert fs.decide("MES", "orb_fade_buy", positions={"ES": 1}, equity=EQUITY, rsi=25) is None
+
+
+def test_orb_fade_sell_closes_the_whole_group():
+    proposal = fs.decide("MES", "orb_fade_sell", positions={"ES": 1, "MES": 2}, equity=EQUITY, rsi=80)
+    assert proposal is not None
+    assert proposal.side == "close"
+    assert proposal.contracts == {"ES": 1, "MES": 2}
+    assert "ORB fade" in proposal.reason
+
+
+def test_orb_fade_sell_with_flat_group_proposes_nothing():
+    assert fs.decide("MES", "orb_fade_sell", positions={}, equity=EQUITY, rsi=80) is None
