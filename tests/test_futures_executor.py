@@ -197,6 +197,65 @@ async def test_duplicate_signal_on_pending_group_is_dropped(monkeypatch, tmp_pat
     await task1
 
 
+# --- force_close (stop loss — the one path with no confirmation) -----------
+
+async def test_force_close_closes_and_logs(tmp_path):
+    broker = FakeBroker(positions={})
+    ex = FuturesExecutor(broker)
+
+    assert await ex.force_close("MES", 2, "18.4pts against, past the 20-pt stop") is True
+
+    assert broker.orders == [("MES", "SELL", 2)]
+    entry = last_log_entry(tmp_path)
+    assert entry["outcome"] == "stop_loss_closed"
+    assert entry["symbol"] == "MES"
+
+
+async def test_force_close_never_submits_a_buy_to_open():
+    """Structurally incapable of opening or increasing a position — the
+    action is always SELL, never BUY."""
+    broker = FakeBroker(positions={})
+    ex = FuturesExecutor(broker)
+    await ex.force_close("MES", 2, "stopped out")
+    assert all(action == "SELL" for _, action, _ in broker.orders)
+
+
+async def test_force_close_never_contacts_telegram(monkeypatch):
+    broker = FakeBroker(positions={})
+    ex = FuturesExecutor(broker)
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock())
+    monkeypatch.setattr(tc_module.requests, "post", MagicMock())
+
+    await ex.force_close("MES", 2, "stopped out")
+
+    tc_module.requests.get.assert_not_called()
+    tc_module.requests.post.assert_not_called()
+
+
+async def test_force_close_defers_when_the_group_is_pending(tmp_path):
+    """Closing while a confirmation is outstanding for the same underlying
+    risks a double close — ES and MES share a group, so a pending MES
+    proposal must also defer an ES force_close."""
+    broker = FakeBroker(positions={})
+    ex = FuturesExecutor(broker)
+    ex._pending.add(SP500)
+
+    assert await ex.force_close("ES", 1, "stopped out") is False
+    assert broker.orders == []
+    assert last_log_entry(tmp_path)["outcome"] == "stop_loss_deferred"
+
+
+async def test_failed_force_close_is_reported_and_retryable(tmp_path):
+    broker = FakeBroker(positions={}, fail_on={"MES"})
+    ex = FuturesExecutor(broker)
+
+    assert await ex.force_close("MES", 2, "stopped out") is False
+
+    assert last_log_entry(tmp_path)["outcome"] == "stop_loss_failed"
+    # the group must not stay latched in _pending, or it can never retry
+    assert SP500 not in ex._pending
+
+
 async def test_other_signal_kinds_are_ignored(monkeypatch, tmp_path):
     broker = FakeBroker(positions={})
     ex = FuturesExecutor(broker)

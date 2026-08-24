@@ -39,8 +39,8 @@ def account_value(tag, value):
     return SimpleNamespace(tag=tag, value=value)
 
 
-def position(symbol, qty):
-    return SimpleNamespace(contract=SimpleNamespace(symbol=symbol), position=qty)
+def position(symbol, qty, avg_cost=0.0):
+    return SimpleNamespace(contract=SimpleNamespace(symbol=symbol), position=qty, avgCost=avg_cost)
 
 
 def contract_detail(month, con_id):
@@ -136,6 +136,58 @@ async def test_get_positions_omits_flat_entries(monkeypatch):
     broker = IBBroker()
 
     assert await broker.get_positions() == {}
+
+
+# --- get_position_details: avgCost -> raw index price -----------------------
+
+async def test_get_position_details_converts_avg_cost_by_multiplier(monkeypatch):
+    fib = fake_ib()
+    # IB reports avgCost as price x multiplier for futures. MES multiplier
+    # is 5, so an entry at index level 7764 reports avgCost=38820.
+    fib.positions = MagicMock(return_value=[position("MES", 3.0, avg_cost=5 * 7764.0)])
+    install(monkeypatch, fib)
+    broker = IBBroker()
+
+    details = await broker.get_position_details()
+
+    assert details["MES"].qty == 3.0
+    assert details["MES"].avg_entry_price == 7764.0
+
+
+async def test_get_position_details_converts_the_mini_too(monkeypatch):
+    fib = fake_ib()
+    # ES multiplier is 50.
+    fib.positions = MagicMock(return_value=[position("ES", -1.0, avg_cost=50 * 7770.0)])
+    install(monkeypatch, fib)
+    broker = IBBroker()
+
+    details = await broker.get_position_details()
+
+    assert details["ES"].qty == -1.0
+    assert details["ES"].avg_entry_price == 7770.0
+
+
+async def test_get_position_details_ignores_unknown_symbols(monkeypatch):
+    fib = fake_ib()
+    fib.positions = MagicMock(return_value=[position("AAPL", 100.0, avg_cost=150.0)])
+    install(monkeypatch, fib)
+    broker = IBBroker()
+
+    assert await broker.get_position_details() == {}
+
+
+async def test_get_positions_still_returns_plain_quantities(monkeypatch):
+    """get_positions() is now a thin view over get_position_details() —
+    existing callers (futures_strategy.decide(), etc.) must see no change."""
+    fib = fake_ib()
+    fib.positions = MagicMock(return_value=[
+        position("MES", 3.0, avg_cost=5 * 7764.0),
+        position("ES", -1.0, avg_cost=50 * 7770.0),
+    ])
+    install(monkeypatch, fib)
+    broker = IBBroker()
+
+    assert await broker.get_positions() == {"MES": 3.0, "ES": -1.0}
 
 
 # --- submit_market_order: front-month resolution -----------------------------
