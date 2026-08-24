@@ -168,6 +168,23 @@ RISK_TOTAL_PCT = float(os.getenv("RISK_TOTAL_PCT", "2.0"))
 # Audit trail for futures_executor.py, parallel to EXECUTION_LOG_PATH above.
 FUTURES_EXECUTION_LOG_PATH = os.getenv("FUTURES_EXECUTION_LOG_PATH", "futures_execution_log.jsonl")
 
+# --- Futures time-based exits (futures_time_exit.py) -------------------------
+# Separate from the equity MAX_HOLD_MINUTES/FLATTEN_BEFORE_CLOSE_MINUTES on
+# purpose — same reason FUTURES_STOP_POINTS is separate from STOP_LOSS_PCT:
+# these instruments and their holding-period intuitions aren't the same as
+# stocks, so tuning one pipeline should never silently retune the other.
+#
+# Close any futures position open longer than this. 0 disables. Default 0,
+# same rationale as MAX_HOLD_MINUTES: a max hold that fires mid-session cuts
+# winners as readily as losers — turn it on deliberately.
+FUTURES_MAX_HOLD_MINUTES = float(os.getenv("FUTURES_MAX_HOLD_MINUTES", "0"))
+# Close everything this many minutes before CME's weekly close (Friday
+# ~17:00 America/New_York) rather than carry it over the weekend. Unlike
+# equities, futures have no single daily close (the ~17:00-18:00 ET daily
+# maintenance halt is deliberately NOT treated as one — see
+# futures_time_exit.py). 0 disables.
+FUTURES_FLATTEN_BEFORE_WEEKLY_CLOSE_MINUTES = float(os.getenv("FUTURES_FLATTEN_BEFORE_WEEKLY_CLOSE_MINUTES", "15"))
+
 
 # --- IB (futures port) -------------------------------------------------------
 # One configured port, deliberately — see ib_broker.py for why this doesn't

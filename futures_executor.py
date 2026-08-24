@@ -14,10 +14,14 @@ one level up (a group, not a symbol; see futures_strategy.py):
   4. Orders go out through ib_broker.py, which refuses to even connect to a
      LIVE IB port.
 
-NOT wired into main.py, and there is no futures Watcher yet generating these
-signals — process_signal() is ready for one to call, same "build the layer
-before its caller exists" approach risk_budget.py used. See ib_broker.py's
-module docstring for what has and hasn't been verified against real IB.
+force_close() is the exception to all of that: the one path that trades
+without your explicit yes, for a position already past its stop
+(futures_stop_loss.py). Same shape as executor.py's force_close — it takes
+a symbol and quantity you already hold, so it can only ever close, never
+open or increase exposure.
+
+Wired into main.py behind config.FUTURES_ENABLED. See ib_broker.py's module
+docstring for what has and hasn't been verified against real IB.
 
 Dedup is per GROUP, not per symbol: a pending MES proposal has to block a
 fresh ES signal too, because they're the same bet (Hazard 04) and confirming
@@ -127,6 +131,41 @@ class FuturesExecutor:
             except Exception as exc:
                 self._log(leg_symbol, "submit_failed", detail=str(exc), proposal=proposal)
                 self._notify(f"SUBMIT FAILED — {action} {quantity} {leg_symbol}", str(exc))
+
+    # --- stop loss (no confirmation) ----------------------------------------
+
+    async def force_close(self, symbol: str, quantity: int, reason: str) -> bool:
+        """
+        Close `quantity` contracts of `symbol` immediately, no confirmation
+        step — the one path in this executor that trades without your
+        explicit yes. Always SELLs: futures_strategy.py never opens a
+        short, so a position this stop loss ever finds is a long, and the
+        only thing this can do is reduce or flatten it — never open a
+        position or add exposure.
+
+        Deferred (not closed) if a proposal for the same GROUP is already
+        awaiting confirmation: submitting now could double-close if you
+        reply "yes" a moment later. The caller (futures_risk_monitor_loop)
+        retries on its next poll.
+        """
+        group = cs.group_of(symbol)
+        if group in self._pending:
+            self._log(symbol, "stop_loss_deferred", detail=f"{reason}; a proposal for {group} is awaiting confirmation")
+            return False
+
+        self._pending.add(group)
+        try:
+            trade = await self.broker.submit_market_order(symbol, "SELL", quantity)
+            order_id = getattr(getattr(trade, "order", None), "orderId", "unknown")
+            self._log(symbol, "stop_loss_closed", detail=f"{reason}; order_id={order_id}")
+            self._notify(f"STOP LOSS — CLOSED {symbol}", f"{reason}. Position closed automatically, no confirmation required.")
+            return True
+        except Exception as exc:
+            self._log(symbol, "stop_loss_failed", detail=f"{reason}; {exc}")
+            self._notify(f"STOP LOSS FAILED — {symbol}", f"{reason}. Could not close: {type(exc).__name__}. Position is still open.")
+            return False
+        finally:
+            self._pending.discard(group)
 
     # --- logging / notification --------------------------------------------
 

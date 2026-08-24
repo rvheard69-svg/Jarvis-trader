@@ -26,13 +26,28 @@ mocked IB object (tests/test_ib_broker.py), but never exercised end to end
 against a live IB connection. Re-run spike/ib_connect.py and place one real
 paper order by hand through this wrapper before trusting it with an account
 that matters.
+
+get_position_details()'s avgCost conversion is a second, separate unverified
+assumption: IB's own docs and community reports say a futures position's
+avgCost is reported as price x multiplier (matching the dollar notional
+convention contract_specs.py already uses), not the raw index price — so
+this divides back out by the multiplier to recover it. Confirm this against
+a real position before trusting futures_stop_loss.py's output.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from ib_async import IB, Future, MarketOrder, Trade
 
 import config
 import contract_specs as cs
+
+
+@dataclass(frozen=True)
+class PositionDetail:
+    qty: float
+    avg_entry_price: float  # index points — NOT dollars; see module docstring
 
 
 class IBBroker:
@@ -84,18 +99,36 @@ class IBBroker:
             raise RuntimeError("IB account summary did not include NetLiquidation")
         return float(netliq)
 
-    async def get_positions(self) -> dict[str, float]:
-        """Held quantity per known futures symbol (contract_specs.SPECS).
-        A position in a symbol this app doesn't know about — an options
-        leg, something manually opened — is ignored; it isn't futures
-        exposure risk_budget can reason about. Flat entries are omitted."""
+    async def get_position_details(self) -> dict[str, PositionDetail]:
+        """Held quantity AND average entry price (in index points) per
+        known futures symbol. A position in a symbol this app doesn't know
+        about — an options leg, something manually opened — is ignored; it
+        isn't futures exposure risk_budget or futures_stop_loss can reason
+        about. Flat entries are omitted."""
         await self._ensure_connected()
-        out: dict[str, float] = {}
+        out: dict[str, PositionDetail] = {}
         for p in self.ib.positions():
             symbol = p.contract.symbol
-            if symbol in cs.SPECS and p.position:
-                out[symbol] = out.get(symbol, 0.0) + float(p.position)
+            spec = cs.SPECS.get(symbol)
+            if spec is None or not p.position:
+                continue
+            entry_price = float(p.avgCost) / spec.multiplier if spec.multiplier else 0.0
+            existing = out.get(symbol)
+            if existing is None:
+                out[symbol] = PositionDetail(qty=float(p.position), avg_entry_price=entry_price)
+            else:
+                # Two reports for the same symbol shouldn't happen in
+                # practice; sum the quantity (matching get_positions()'s
+                # prior behavior) and keep the first entry price rather than
+                # silently overwrite or average two possibly-different lots.
+                out[symbol] = PositionDetail(qty=existing.qty + float(p.position), avg_entry_price=existing.avg_entry_price)
         return out
+
+    async def get_positions(self) -> dict[str, float]:
+        """Held quantity per known futures symbol — a thin view over
+        get_position_details() for callers that only need the quantity."""
+        details = await self.get_position_details()
+        return {symbol: d.qty for symbol, d in details.items()}
 
     async def submit_market_order(self, symbol: str, action: str, quantity: int) -> Trade:
         """Submit a market order for `quantity` contracts of `symbol`.

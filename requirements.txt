@@ -5,3 +5,7 @@ python-dotenv>=1.0.0
 plyer>=2.1.0
 requests>=2.31.0
 ib_async>=2.1.0
+# zoneinfo (stdlib) needs this on Windows, which ships no IANA tz database —
+# futures_time_exit.py uses America/New_York for CME's weekly close. Harmless
+# no-op on Linux/macOS, which already have system tz data.
+tzdata>=2024.1
