@@ -171,6 +171,11 @@ FUTURES_EXECUTION_LOG_PATH = os.getenv("FUTURES_EXECUTION_LOG_PATH", "futures_ex
 IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
 IB_PORT = int(os.getenv("IB_PORT", "4002"))
 IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "7"))  # distinct from the spike's own default (99)
+# A second, distinct client id for futures_watcher.py's own IB connection —
+# IB requires each simultaneous connection from the same account to use a
+# different clientId, and the watcher and futures_executor.py's IBBroker
+# connect independently.
+IB_WATCHER_CLIENT_ID = int(os.getenv("IB_WATCHER_CLIENT_ID", "8"))
 IB_PAPER_PORTS = {7497, 4002}  # TWS paper, IB Gateway paper
 IB_LIVE_PORTS = {7496, 4001}   # TWS LIVE, IB Gateway LIVE — validate() refuses these
 
