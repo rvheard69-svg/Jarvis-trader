@@ -20,7 +20,6 @@ import asyncio
 import json
 import time
 
-import requests
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
@@ -28,6 +27,7 @@ from alpaca.trading.requests import MarketOrderRequest
 import config
 import strategy
 from risk_guardrail import RiskGuardrail
+from telegram_confirm import TelegramConfirmer
 from watcher import Signal
 
 
@@ -35,8 +35,8 @@ class Executor:
     def __init__(self, guardrail: RiskGuardrail):
         self.guardrail = guardrail
         self.trading_client = TradingClient(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, paper=True)
-        self._pending: set[str] = set()          # symbols currently awaiting confirmation
-        self._telegram_offset: int | None = None  # None until we've done one getUpdates call
+        self._pending: set[str] = set()  # symbols currently awaiting confirmation
+        self._confirmer = TelegramConfirmer()
 
     # --- position lookup -------------------------------------------------
 
@@ -49,29 +49,6 @@ class Executor:
 
     # --- Telegram confirmation --------------------------------------------
 
-    def _telegram_configured(self) -> bool:
-        return config.telegram_configured()
-
-    def _telegram_send(self, text: str) -> None:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-        resp = requests.post(
-            url,
-            json={"chat_id": config.TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
-        )
-        # Raise rather than swallow: if the proposal never reached you, there's
-        # no point polling five minutes for a reply that can't come.
-        resp.raise_for_status()
-
-    def _telegram_get_updates(self, offset: int | None) -> list:
-        url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/getUpdates"
-        params = {"timeout": 0}
-        if offset is not None:
-            params["offset"] = offset
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json().get("result", [])
-
     async def _propose_and_confirm(self, proposal: strategy.TradeProposal) -> tuple[bool, str]:
         """
         Returns (confirmed, reason). The reason is what lands in
@@ -79,11 +56,6 @@ class Executor:
         a trade didn't happen — so it has to say what actually occurred rather
         than assume a timeout.
         """
-        if not self._telegram_configured():
-            print("[Executor] Telegram isn't configured — nothing to confirm through, so no order will be proposed. "
-                  "Trade confirmation requires NOTIFY_TELEGRAM=true and valid credentials in .env.")
-            return False, "Telegram not configured — you were never asked"
-
         amount = f"${proposal.notional:,.2f}" if proposal.notional else "full position"
         text = (
             f"\U0001F514 *Trade proposal (paper account)*\n"
@@ -92,47 +64,7 @@ class Executor:
             f"Reply *yes* within {config.CONFIRMATION_TIMEOUT_SECONDS // 60} min to submit this paper order, "
             f"or *no* to cancel it now."
         )
-
-        # Establishing the offset and sending the prompt both hit the network.
-        # A failure here means you were never actually asked, so treat it as
-        # "not confirmed" and log it that way — never let it escape as an
-        # exception, which would skip the execution-log record entirely.
-        try:
-            # Establish our starting offset the first time, so we only ever look
-            # at messages sent AFTER this proposal goes out, not old chat history.
-            if self._telegram_offset is None:
-                existing = await asyncio.to_thread(self._telegram_get_updates, None)
-                self._telegram_offset = (existing[-1]["update_id"] + 1) if existing else 0
-
-            await asyncio.to_thread(self._telegram_send, text)
-        except Exception as exc:
-            # redact_secrets: requests puts the full URL in HTTPError, and the
-            # Telegram bot token lives in that URL path.
-            print(config.redact_secrets(
-                f"[Executor] couldn't reach Telegram to request confirmation, "
-                f"treating {proposal.symbol} as unconfirmed: {exc!r}"))
-            return False, f"couldn't reach Telegram to ask: {type(exc).__name__}"
-
-        deadline = time.monotonic() + config.CONFIRMATION_TIMEOUT_SECONDS
-        while time.monotonic() < deadline:
-            await asyncio.sleep(config.CONFIRMATION_POLL_SECONDS)
-            try:
-                updates = await asyncio.to_thread(self._telegram_get_updates, self._telegram_offset)
-            except Exception as exc:
-                print(config.redact_secrets(f"[Executor] Telegram poll failed: {exc!r}"))
-                continue
-            for update in updates:
-                self._telegram_offset = update["update_id"] + 1
-                message = update.get("message", {})
-                if str(message.get("chat", {}).get("id")) != str(config.TELEGRAM_CHAT_ID):
-                    continue  # ignore anyone else who might message the bot
-                reply = (message.get("text") or "").strip().lower()
-                if reply in ("yes", "y", "confirm"):
-                    return True, f"you replied '{reply}'"
-                if reply in ("no", "n", "cancel"):
-                    return False, f"you replied '{reply}'"
-                # anything else (e.g. a stray "hi") is ignored, keep waiting
-        return False, f"no reply within {config.CONFIRMATION_TIMEOUT_SECONDS}s"
+        return await self._confirmer.propose_and_confirm(text, log_prefix="[Executor]")
 
     # --- order submission --------------------------------------------------
 

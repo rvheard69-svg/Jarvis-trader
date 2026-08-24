@@ -160,6 +160,25 @@ RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.5"))
 RISK_PER_GROUP_PCT = float(os.getenv("RISK_PER_GROUP_PCT", "1.5"))
 RISK_TOTAL_PCT = float(os.getenv("RISK_TOTAL_PCT", "2.0"))
 
+# Audit trail for futures_executor.py, parallel to EXECUTION_LOG_PATH above.
+FUTURES_EXECUTION_LOG_PATH = os.getenv("FUTURES_EXECUTION_LOG_PATH", "futures_execution_log.jsonl")
+
+
+# --- IB (futures port) -------------------------------------------------------
+# One configured port, deliberately — see ib_broker.py for why this doesn't
+# auto-probe the way spike/ib_connect.py does. Default is IB Gateway's paper
+# port; override to 7497 for TWS.
+IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
+IB_PORT = int(os.getenv("IB_PORT", "4002"))
+IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "7"))  # distinct from the spike's own default (99)
+IB_PAPER_PORTS = {7497, 4002}  # TWS paper, IB Gateway paper
+IB_LIVE_PORTS = {7496, 4001}   # TWS LIVE, IB Gateway LIVE — validate() refuses these
+
+# Futures symbols this app is allowed to trade. Must all be in
+# contract_specs.SPECS — validate() checks this at startup rather than
+# discovering an unknown symbol mid-session.
+FUTURES_WATCHLIST = _get_list("FUTURES_WATCHLIST", "MES,MNQ")
+
 
 def _is_placeholder(val: str) -> bool:
     """
@@ -208,4 +227,18 @@ def validate() -> None:
             "and has never placed a real order — flip this back to true. If you "
             "genuinely intend to trade live later, that should be a deliberate, "
             "separate step, not a config default."
+        )
+    if IB_PORT in IB_LIVE_PORTS:
+        raise RuntimeError(
+            f"IB_PORT={IB_PORT} is a LIVE IB port ({sorted(IB_LIVE_PORTS)}). This "
+            f"project is paper-only, same guarantee as ALPACA_PAPER — point IB_PORT "
+            f"at a paper port instead ({sorted(IB_PAPER_PORTS)})."
+        )
+    import contract_specs as _cs  # deferred: contract_specs has no reason to load for the equity-only app
+
+    unknown_futures = [s for s in FUTURES_WATCHLIST if s not in _cs.SPECS]
+    if unknown_futures:
+        raise RuntimeError(
+            f"FUTURES_WATCHLIST names symbol(s) with no contract spec: "
+            f"{unknown_futures}. Known symbols: {sorted(_cs.SPECS)}."
         )
