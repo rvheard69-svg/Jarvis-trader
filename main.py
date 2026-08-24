@@ -12,10 +12,19 @@ Wires the Watcher, Analyst, Risk Guardrail, and Executor together:
                                                                               order via Alpaca)
 
 Every signal is dispatched to BOTH paths concurrently: the Analyst narrates
-everything, the Executor only acts on rsi_oversold/rsi_overbought (see
-strategy.py) and only after the Risk Guardrail allows it AND you reply "yes"
-in Telegram. This process only ever touches Alpaca's PAPER endpoint — see
-README.md for what that guarantees and what it doesn't.
+everything, the Executor only acts on rsi_oversold/rsi_overbought/
+orb_fade_buy/orb_fade_sell (see strategy.py) and only after the Risk
+Guardrail allows it AND you reply "yes" in Telegram. This process only ever
+touches Alpaca's PAPER endpoint — see README.md for what that guarantees
+and what it doesn't.
+
+If FUTURES_ENABLED=true, the same shape runs a second time for IB futures:
+FuturesWatcher -> futures_queue -> futures_dispatch() -> Analyst (shared)
+and FuturesExecutor (futures_strategy.py's rule -> risk_budget.evaluate()
+-> the same TelegramConfirmer -> a paper order via ib_broker.py). Off by
+default — see config.FUTURES_ENABLED and ib_broker.py's module docstring
+for why. There is no futures equivalent of risk_monitor_loop yet: nothing
+polls IB positions for a stop-loss or time-exit the way it does for Alpaca.
 """
 import asyncio
 import sys
@@ -38,6 +47,11 @@ from analyst import Analyst
 from executor import Executor
 from notifier import send as notify
 from risk_guardrail import RiskGuardrail
+
+if config.FUTURES_ENABLED:
+    from futures_watcher import FuturesWatcher
+    from futures_executor import FuturesExecutor
+    from ib_broker import IBBroker
 
 
 async def dispatch(queue: asyncio.Queue, analyst: Analyst, executor: Executor, guardrail: RiskGuardrail) -> None:
@@ -76,6 +90,35 @@ async def _handle_execution(signal, executor: Executor) -> None:
         await executor.process(signal)
     except Exception as exc:
         print(f"[Executor] failed to process signal {signal}: {exc}")
+
+
+async def futures_dispatch(queue: asyncio.Queue, analyst: Analyst, futures_executor) -> None:
+    """
+    Same fan-out shape as dispatch() above, for futures signals. No halt
+    check here: RiskGuardrail.is_halted() reads Alpaca's account, which has
+    nothing to do with the IB paper account futures trades against —
+    risk_budget.evaluate() (called inside FuturesExecutor.process_signal)
+    is the equivalent per-trade gate for futures.
+    """
+    while True:
+        signal = await queue.get()
+        asyncio.create_task(_handle_futures_analysis(signal, analyst))
+        asyncio.create_task(_handle_futures_execution(signal, futures_executor))
+
+
+async def _handle_futures_analysis(signal, analyst: Analyst) -> None:
+    try:
+        result = await asyncio.to_thread(analyst.process, signal)
+        notify(result)
+    except Exception as exc:
+        print(f"[Analyst] failed to process futures signal {signal}: {exc}")
+
+
+async def _handle_futures_execution(signal, futures_executor) -> None:
+    try:
+        await futures_executor.process_signal(signal.symbol, signal.kind, signal.detail.get("rsi"))
+    except Exception as exc:
+        print(f"[FuturesExecutor] failed to process signal {signal}: {exc}")
 
 
 async def risk_monitor_loop(guardrail: RiskGuardrail, executor: Executor) -> None:
@@ -188,11 +231,27 @@ async def main() -> None:
     guardrail = RiskGuardrail()
     executor = Executor(guardrail)
 
-    await asyncio.gather(
+    tasks = [
         watcher.start(),
         dispatch(queue, analyst, executor, guardrail),
         risk_monitor_loop(guardrail, executor),
-    )
+    ]
+
+    if config.FUTURES_ENABLED:
+        print(f"Watching futures: {', '.join(config.FUTURES_WATCHLIST)}  "
+              f"(IB {config.IB_HOST}:{config.IB_PORT})")
+        futures_queue: asyncio.Queue = asyncio.Queue()
+        futures_watcher = FuturesWatcher(futures_queue)
+        futures_executor = FuturesExecutor(IBBroker())
+        tasks += [
+            futures_watcher.start(),
+            futures_dispatch(futures_queue, analyst, futures_executor),
+        ]
+    else:
+        print("[main] Futures (IB) disabled — set FUTURES_ENABLED=true in .env to turn it on. "
+              "Unverified against real IB market data; read ib_broker.py's module docstring first.")
+
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":

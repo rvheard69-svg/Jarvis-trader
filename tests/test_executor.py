@@ -8,6 +8,7 @@ from alpaca.trading.enums import OrderSide
 
 import config
 import executor as executor_module
+import telegram_confirm as tc_module
 from executor import Executor
 from watcher import Signal
 
@@ -44,7 +45,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(executor_module, "TradingClient", MagicMock(return_value=MagicMock()))
     # Never let a real notification (esp. Telegram) escape to the network during these tests.
     monkeypatch.setattr("notifier.send", MagicMock())
-    monkeypatch.setattr(executor_module.requests, "post", MagicMock())
+    monkeypatch.setattr(tc_module.requests, "post", MagicMock())
 
 
 def make_executor(guardrail, position_qty=0.0):
@@ -65,7 +66,7 @@ async def test_blocked_proposal_never_reaches_telegram(monkeypatch, tmp_path):
     signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
     await ex.process(signal)
 
-    executor_module.requests.post.assert_not_called()
+    tc_module.requests.post.assert_not_called()
     assert last_log_entry(tmp_path)["outcome"] == "blocked_by_guardrail"
 
 
@@ -74,7 +75,7 @@ async def test_confirmed_buy_submits_with_right_size_and_side(monkeypatch, tmp_p
     ex = make_executor(guardrail, position_qty=0.0)
     ex.trading_client.submit_order.return_value = SimpleNamespace(id="order-123")
 
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
         json_response({"result": []}),  # establishes the starting offset
         json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "yes"}}]}),
     ]))
@@ -95,7 +96,7 @@ async def test_confirmed_sell_closes_position(monkeypatch, tmp_path):
     ex = make_executor(guardrail, position_qty=10.0)
     ex.trading_client.close_position.return_value = SimpleNamespace(id="order-456")
 
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
         json_response({"result": []}),
         json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "yes"}}]}),
     ]))
@@ -124,7 +125,7 @@ async def test_decline_reason_distinguishes_never_asked_from_timeout(monkeypatch
 
 async def test_timeout_reason_says_timeout(monkeypatch, tmp_path):
     ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
-    monkeypatch.setattr(executor_module.requests, "get",
+    monkeypatch.setattr(tc_module.requests, "get",
                         MagicMock(return_value=json_response({"result": []})))
 
     await ex.process(Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20}))
@@ -134,7 +135,7 @@ async def test_timeout_reason_says_timeout(monkeypatch, tmp_path):
 
 async def test_explicit_no_is_recorded_as_your_reply(monkeypatch, tmp_path):
     ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
         json_response({"result": []}),
         json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "no"}}]}),
     ]))
@@ -150,7 +151,7 @@ async def test_explicit_no_cancels(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
 
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
         json_response({"result": []}),
         json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "no"}}]}),
     ]))
@@ -166,7 +167,7 @@ async def test_timeout_with_no_reply(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
 
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(
         return_value=json_response({"result": []})
     ))
 
@@ -185,7 +186,7 @@ async def test_reply_from_wrong_chat_id_is_ignored(monkeypatch, tmp_path):
 
     # First call establishes the starting offset; every poll after that keeps
     # returning the same wrong-chat-id message, which should stay ignored.
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(side_effect=[
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
         json_response({"result": []}),
     ] + [json_response(wrong_chat_update)] * 10))
 
@@ -201,14 +202,14 @@ async def test_placeholder_credentials_block_any_proposal(monkeypatch, tmp_path)
     # pass every truthiness check and convince the Executor it had a channel.
     monkeypatch.setattr(config, "TELEGRAM_BOT_TOKEN", "your_bot_token_from_botfather")
     monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "your_chat_id")
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock())
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock())
 
     ex = make_executor(FakeGuardrail(equity=10000.0, allowed=True))
     signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
     await ex.process(signal)
 
-    executor_module.requests.get.assert_not_called()   # never even reaches out
-    executor_module.requests.post.assert_not_called()
+    tc_module.requests.get.assert_not_called()   # never even reaches out
+    tc_module.requests.post.assert_not_called()
     ex.trading_client.submit_order.assert_not_called()
     assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
 
@@ -218,7 +219,7 @@ async def test_unreachable_telegram_logs_not_confirmed_instead_of_raising(monkey
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
     monkeypatch.setattr(
-        executor_module.requests,
+        tc_module.requests,
         "get",
         MagicMock(side_effect=RuntimeError("404 Not Found")),
     )
@@ -236,13 +237,13 @@ async def test_failed_send_short_circuits_without_polling(monkeypatch, tmp_path)
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
     monkeypatch.setattr(
-        executor_module.requests,
+        tc_module.requests,
         "get",
         MagicMock(return_value=json_response({"result": []})),
     )
     failed = MagicMock()
     failed.raise_for_status.side_effect = RuntimeError("401 Unauthorized")
-    monkeypatch.setattr(executor_module.requests, "post", MagicMock(return_value=failed))
+    monkeypatch.setattr(tc_module.requests, "post", MagicMock(return_value=failed))
 
     signal = Signal(symbol="AAPL", kind="rsi_oversold", price=100.0, detail={"rsi": 20})
     start = asyncio.get_event_loop().time()
@@ -254,11 +255,32 @@ async def test_failed_send_short_circuits_without_polling(monkeypatch, tmp_path)
     assert last_log_entry(tmp_path)["outcome"] == "not_confirmed"
 
 
+async def test_orb_fade_buy_reaches_submission(monkeypatch, tmp_path):
+    """Regression: process() used to filter signal.kind down to
+    rsi_oversold/rsi_overbought before decide() ever saw it, so an
+    orb_fade_buy signal — despite strategy.decide() handling it — was
+    silently dropped and never proposed a trade."""
+    guardrail = FakeGuardrail(equity=10000.0, allowed=True)
+    ex = make_executor(guardrail, position_qty=0.0)
+    ex.trading_client.submit_order.return_value = SimpleNamespace(id="order-orb-1")
+
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(side_effect=[
+        json_response({"result": []}),
+        json_response({"result": [{"update_id": 1, "message": {"chat": {"id": 12345}, "text": "yes"}}]}),
+    ]))
+
+    signal = Signal(symbol="AAPL", kind="orb_fade_buy", price=100.0, detail={"rsi": 25, "orb": "fade_down"})
+    await ex.process(signal)
+
+    ex.trading_client.submit_order.assert_called_once()
+    assert last_log_entry(tmp_path)["outcome"] == "submitted"
+
+
 async def test_duplicate_signal_on_pending_symbol_is_dropped(monkeypatch, tmp_path):
     guardrail = FakeGuardrail(equity=10000.0, allowed=True)
     ex = make_executor(guardrail)
 
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock(
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock(
         return_value=json_response({"result": []})
     ))
 

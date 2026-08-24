@@ -8,6 +8,7 @@ import pytest
 
 import config
 import executor as executor_module
+import telegram_confirm as tc_module
 import risk_guardrail as rg_module
 from executor import Executor
 from risk_guardrail import RiskGuardrail
@@ -98,12 +99,12 @@ async def test_force_close_never_submits_a_buy(ex):
 
 async def test_force_close_never_contacts_telegram(ex, monkeypatch):
     """The whole point is that it does not wait for a reply."""
-    monkeypatch.setattr(executor_module.requests, "get", MagicMock())
-    monkeypatch.setattr(executor_module.requests, "post", MagicMock())
+    monkeypatch.setattr(tc_module.requests, "get", MagicMock())
+    monkeypatch.setattr(tc_module.requests, "post", MagicMock())
     ex.trading_client.close_position.return_value = SimpleNamespace(id="ord-1")
     await ex.force_close("NVDA", "down 6%")
-    executor_module.requests.get.assert_not_called()
-    executor_module.requests.post.assert_not_called()
+    tc_module.requests.get.assert_not_called()
+    tc_module.requests.post.assert_not_called()
 
 
 async def test_force_close_defers_when_a_proposal_is_pending(ex, tmp_path):
